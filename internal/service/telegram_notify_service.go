@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -77,8 +78,22 @@ func (s *TelegramNotifyService) SendWithBotToken(ctx context.Context, botToken s
 
 	if strings.TrimSpace(options.AttachmentURL) != "" {
 		attachmentURL := strings.TrimSpace(options.AttachmentURL)
+		if isTelegramPhotoAttachment(attachmentURL, options.AttachmentDisplayName) {
+			if filePath, ok := resolveTelegramAttachmentPath(attachmentURL); ok {
+				return s.sendMultipartMedia(ctx, botToken, "sendPhoto", "photo", filePath, options)
+			}
+			payload := map[string]interface{}{
+				"chat_id": chatID,
+				"photo":   attachmentURL,
+				"caption": message,
+			}
+			if parseMode := strings.TrimSpace(options.ParseMode); parseMode != "" {
+				payload["parse_mode"] = parseMode
+			}
+			return s.sendJSONRequest(ctx, botToken, "sendPhoto", payload)
+		}
 		if filePath, ok := resolveTelegramAttachmentPath(attachmentURL); ok {
-			return s.sendMultipartDocument(ctx, botToken, filePath, options)
+			return s.sendMultipartMedia(ctx, botToken, "sendDocument", "document", filePath, options)
 		}
 		payload := map[string]interface{}{
 			"chat_id":  chatID,
@@ -102,7 +117,7 @@ func (s *TelegramNotifyService) SendWithBotToken(ctx context.Context, botToken s
 	return s.sendJSONRequest(ctx, botToken, "sendMessage", payload)
 }
 
-func (s *TelegramNotifyService) sendMultipartDocument(ctx context.Context, botToken, filePath string, options TelegramSendOptions) error {
+func (s *TelegramNotifyService) sendMultipartMedia(ctx context.Context, botToken, method, fieldName, filePath string, options TelegramSendOptions) error {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return fmt.Errorf("%w: open attachment failed: %v", ErrNotificationSendFailed, err)
@@ -125,7 +140,7 @@ func (s *TelegramNotifyService) sendMultipartDocument(ctx context.Context, botTo
 			return err
 		}
 	}
-	part, err := writer.CreateFormFile("document", filepath.Base(filePath))
+	part, err := writer.CreateFormFile(fieldName, filepath.Base(filePath))
 	if err != nil {
 		return err
 	}
@@ -136,7 +151,7 @@ func (s *TelegramNotifyService) sendMultipartDocument(ctx context.Context, botTo
 		return err
 	}
 
-	requestURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendDocument", botToken)
+	requestURL := fmt.Sprintf("https://api.telegram.org/bot%s/%s", botToken, method)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, &body)
 	if err != nil {
 		return err
@@ -204,6 +219,38 @@ func resolveTelegramAttachmentPath(raw string) (string, bool) {
 		return normalized, true
 	}
 	return "", false
+}
+
+func isTelegramPhotoAttachment(rawURL, displayName string) bool {
+	candidates := []string{
+		strings.TrimSpace(displayName),
+		strings.TrimSpace(rawURL),
+	}
+
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		value := candidate
+		if parsed, err := url.Parse(candidate); err == nil && parsed != nil {
+			if parsed.Path != "" {
+				value = parsed.Path
+			}
+		}
+		ext := strings.ToLower(strings.TrimSpace(filepath.Ext(value)))
+		switch ext {
+		case ".jpg", ".jpeg", ".png", ".webp":
+			return true
+		}
+		if ext == ".gif" {
+			return true
+		}
+		if detected := mime.TypeByExtension(ext); strings.HasPrefix(strings.ToLower(detected), "image/") {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (s *TelegramNotifyService) resolveBotToken() (string, error) {
