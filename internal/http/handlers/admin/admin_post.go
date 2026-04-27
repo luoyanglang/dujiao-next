@@ -6,6 +6,7 @@ import (
 
 	"github.com/dujiao-next/internal/http/handlers/shared"
 	"github.com/dujiao-next/internal/http/response"
+	"github.com/dujiao-next/internal/models"
 	"github.com/dujiao-next/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -40,6 +41,7 @@ type CreatePostRequest struct {
 	ContentJSON map[string]interface{} `json:"content"`
 	Thumbnail   string                 `json:"thumbnail"`
 	IsPublished *bool                  `json:"is_published"`
+	ProductIDs  *[]uint                `json:"product_ids"` // nil 不改；非 nil 替换关联
 }
 
 // CreatePost 创建文章
@@ -58,6 +60,7 @@ func (h *Handler) CreatePost(c *gin.Context) {
 		ContentJSON: req.ContentJSON,
 		Thumbnail:   req.Thumbnail,
 		IsPublished: req.IsPublished,
+		ProductIDs:  req.ProductIDs,
 	})
 	if err != nil {
 		if errors.Is(err, service.ErrInvalidPostType) {
@@ -93,6 +96,7 @@ func (h *Handler) UpdatePost(c *gin.Context) {
 		ContentJSON: req.ContentJSON,
 		Thumbnail:   req.Thumbnail,
 		IsPublished: req.IsPublished,
+		ProductIDs:  req.ProductIDs,
 	})
 	if err != nil {
 		if errors.Is(err, service.ErrInvalidPostType) {
@@ -112,6 +116,43 @@ func (h *Handler) UpdatePost(c *gin.Context) {
 	}
 
 	response.Success(c, post)
+}
+
+// AdminPostProductRef 后台编辑回填的关联商品精简结构
+type AdminPostProductRef struct {
+	ID    uint        `json:"id"`
+	Slug  string      `json:"slug"`
+	Title models.JSON `json:"title"`
+	Image string      `json:"image,omitempty"`
+}
+
+// GetAdminPostProductIDs 获取文章关联商品列表（后台编辑回填）
+func (h *Handler) GetAdminPostProductIDs(c *gin.Context) {
+	idStr := c.Param("id")
+	id64, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil || id64 == 0 {
+		shared.RespondError(c, response.CodeBadRequest, "error.invalid_id", nil)
+		return
+	}
+	products, err := h.PostService.ListRelatedProducts(uint(id64))
+	if err != nil {
+		shared.RespondError(c, response.CodeInternal, "error.post_fetch_failed", err)
+		return
+	}
+	refs := make([]AdminPostProductRef, 0, len(products))
+	for i := range products {
+		p := &products[i]
+		ref := AdminPostProductRef{
+			ID:    p.ID,
+			Slug:  p.Slug,
+			Title: p.TitleJSON,
+		}
+		if len(p.Images) > 0 {
+			ref.Image = p.Images[0]
+		}
+		refs = append(refs, ref)
+	}
+	response.Success(c, refs)
 }
 
 // DeletePost 删除文章（软删除）

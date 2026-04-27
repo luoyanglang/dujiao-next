@@ -136,3 +136,10 @@ email:
 order:
   payment_expire_minutes: 15
   max_refund_days: 30
+
+# Web 路由配置（仅在 fullstack 二进制模式下生效；普通 Docker 镜像部署忽略此段）
+web:
+  # 后台访问路径前缀
+  # 强烈建议改成不易猜测的字符串以降低自动化扫描风险
+  # 例如: "/dj-mgmt-7x9k2" 或 "/console-private"
+  admin_path: "/admin"

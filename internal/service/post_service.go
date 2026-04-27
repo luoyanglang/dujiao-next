@@ -1,6 +1,8 @@
 package service
 
 import (
+	"time"
+
 	"github.com/dujiao-next/internal/constants"
 	"github.com/dujiao-next/internal/models"
 	"github.com/dujiao-next/internal/repository"
@@ -25,6 +27,7 @@ type CreatePostInput struct {
 	ContentJSON map[string]interface{}
 	Thumbnail   string
 	IsPublished *bool
+	ProductIDs  *[]uint // nil 表示不修改关联，非 nil（含空数组）表示替换关联
 }
 
 var allowedPostTypes = map[string]struct{}{
@@ -33,11 +36,12 @@ var allowedPostTypes = map[string]struct{}{
 }
 
 // ListPublic 获取公开文章列表
-func (s *PostService) ListPublic(postType string, page, pageSize int) ([]models.Post, int64, error) {
+func (s *PostService) ListPublic(postType, search string, page, pageSize int) ([]models.Post, int64, error) {
 	filter := repository.PostListFilter{
 		Page:          page,
 		PageSize:      pageSize,
 		Type:          postType,
+		Search:        search,
 		OnlyPublished: true,
 		OrderBy:       "published_at DESC, created_at DESC",
 	}
@@ -96,9 +100,18 @@ func (s *PostService) Create(input CreatePostInput) (*models.Post, error) {
 		Thumbnail:   input.Thumbnail,
 		IsPublished: isPublished,
 	}
+	if isPublished {
+		now := time.Now()
+		post.PublishedAt = &now
+	}
 
 	if err := s.repo.Create(&post); err != nil {
 		return nil, err
+	}
+	if input.ProductIDs != nil {
+		if err := s.repo.SetRelatedProductIDs(post.ID, *input.ProductIDs); err != nil {
+			return nil, err
+		}
 	}
 	return &post, nil
 }
@@ -132,13 +145,38 @@ func (s *PostService) Update(id string, input CreatePostInput) (*models.Post, er
 	post.ContentJSON = models.JSON(input.ContentJSON)
 	post.Thumbnail = input.Thumbnail
 	if input.IsPublished != nil {
+		wasPublished := post.IsPublished
 		post.IsPublished = *input.IsPublished
+		if *input.IsPublished && !wasPublished && post.PublishedAt == nil {
+			now := time.Now()
+			post.PublishedAt = &now
+		}
 	}
 
 	if err := s.repo.Update(post); err != nil {
 		return nil, err
 	}
+	if input.ProductIDs != nil {
+		if err := s.repo.SetRelatedProductIDs(post.ID, *input.ProductIDs); err != nil {
+			return nil, err
+		}
+	}
 	return post, nil
+}
+
+// GetRelatedProductIDs 获取文章关联商品 ID 列表（后台编辑回填）
+func (s *PostService) GetRelatedProductIDs(postID uint) ([]uint, error) {
+	return s.repo.GetRelatedProductIDs(postID)
+}
+
+// ListRelatedProducts 获取文章关联的商品列表（公开博客详情用）
+func (s *PostService) ListRelatedProducts(postID uint) ([]models.Product, error) {
+	return s.repo.ListRelatedProducts(postID)
+}
+
+// ListPostsForProduct 获取与某商品关联的已发布博客列表（公开商品详情用，仅 blog 类型）
+func (s *PostService) ListPostsForProduct(productID uint, limit int) ([]models.Post, error) {
+	return s.repo.ListPostsForProduct(productID, constants.PostTypeBlog, true, limit)
 }
 
 // Delete 删除文章

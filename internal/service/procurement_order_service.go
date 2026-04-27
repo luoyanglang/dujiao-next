@@ -809,6 +809,11 @@ func (s *ProcurementOrderService) List(filter repository.ProcurementOrderListFil
 	return orders, total, nil
 }
 
+// StatsByStatus 按状态聚合采购单数量（基于全量数据）
+func (s *ProcurementOrderService) StatsByStatus(filter repository.ProcurementOrderListFilter) (map[string]int64, error) {
+	return s.procRepo.StatsByStatus(filter)
+}
+
 // FillParentOrderNo 为单个采购单填充父订单号
 func (s *ProcurementOrderService) FillParentOrderNo(order *models.ProcurementOrder) {
 	if order == nil || order.LocalOrder == nil || order.LocalOrder.ParentID == nil {

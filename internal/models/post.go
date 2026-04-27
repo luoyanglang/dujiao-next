@@ -25,3 +25,17 @@ type Post struct {
 func (Post) TableName() string {
 	return "posts"
 }
+
+// PostProduct 文章与商品的多对多关联
+type PostProduct struct {
+	ID        uint      `gorm:"primarykey" json:"id"`
+	PostID    uint      `gorm:"not null;uniqueIndex:idx_post_product,priority:1" json:"post_id"`
+	ProductID uint      `gorm:"not null;uniqueIndex:idx_post_product,priority:2;index" json:"product_id"`
+	Sort      int       `gorm:"not null;default:0" json:"sort"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// TableName 指定表名
+func (PostProduct) TableName() string {
+	return "post_products"
+}

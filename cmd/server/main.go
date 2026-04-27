@@ -12,6 +12,7 @@ import (
 	"github.com/dujiao-next/internal/logger"
 	"github.com/dujiao-next/internal/models"
 	"github.com/dujiao-next/internal/version"
+	"github.com/dujiao-next/internal/web"
 
 	"github.com/gin-gonic/gin"
 )
@@ -40,6 +41,23 @@ func main() {
 		}
 	} else if isWeakSecret(cfg.JWT.SecretKey) {
 		stdLog.Printf("警告: JWT secret 过弱或仍为默认值，建议在生产环境中更换")
+	}
+
+	// fullstack 模式下打印内嵌 SPA 信息
+	if web.Enabled() {
+		fmt.Println(ansiGreen + "Embedded SPAs: admin (" + cfg.Web.AdminPath + "), user (/)" + ansiReset)
+	}
+
+	// fullstack 模式下若仍使用默认 admin 路径，提示安全风险
+	if web.Enabled() && cfg.Server.Mode == "release" && cfg.Web.AdminPath == "/admin" {
+		stdLog.Printf("警告: web.admin_path 仍为默认 /admin，建议修改为不易猜测的路径以降低自动化扫描风险")
+	}
+
+	// 自动创建数据目录（fullstack 二进制小白部署免去手动 mkdir）
+	for _, dir := range []string{"db", "uploads", "logs"} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			stdLog.Printf("警告: 创建目录 %s 失败: %v", dir, err)
+		}
 	}
 
 	// 初始化数据库

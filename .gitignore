@@ -11,3 +11,6 @@ uploads
 */dist/
 # Added by goreleaser init:
 dist/
+
+# Fullstack 构建产物（仅 -tags fullstack 时使用，不进 git 历史）
+internal/web/dist/

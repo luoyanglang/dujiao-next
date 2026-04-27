@@ -19,6 +19,7 @@ type ProcurementOrderRepository interface {
 	Update(order *models.ProcurementOrder) error
 	UpdateStatus(id uint, status string, updates map[string]interface{}) error
 	List(filter ProcurementOrderListFilter) ([]models.ProcurementOrder, int64, error)
+	StatsByStatus(filter ProcurementOrderListFilter) (map[string]int64, error)
 	ListRetriable(now time.Time, limit int) ([]models.ProcurementOrder, error)
 	ListByLocalOrderIDs(localOrderIDs []uint) ([]models.ProcurementOrder, error)
 	ListByConnectionAndTimeRange(connectionID uint, start, end time.Time) ([]models.ProcurementOrder, error)
@@ -32,8 +33,8 @@ type ProcurementOrderListFilter struct {
 	Status          string
 	LocalOrderNo    string
 	UpstreamOrderNo string
-	CreatedFrom     string
-	CreatedTo       string
+	CreatedFrom     *time.Time
+	CreatedTo       *time.Time
 	Pagination
 }
 
@@ -145,11 +146,11 @@ func (r *GormProcurementOrderRepository) List(filter ProcurementOrderListFilter)
 	if filter.UpstreamOrderNo != "" {
 		q = q.Where("upstream_order_no = ?", filter.UpstreamOrderNo)
 	}
-	if filter.CreatedFrom != "" {
-		q = q.Where("created_at >= ?", filter.CreatedFrom)
+	if filter.CreatedFrom != nil {
+		q = q.Where("created_at >= ?", *filter.CreatedFrom)
 	}
-	if filter.CreatedTo != "" {
-		q = q.Where("created_at <= ?", filter.CreatedTo)
+	if filter.CreatedTo != nil {
+		q = q.Where("created_at <= ?", *filter.CreatedTo)
 	}
 
 	if err := q.Count(&total).Error; err != nil {
@@ -165,6 +166,42 @@ func (r *GormProcurementOrderRepository) List(filter ProcurementOrderListFilter)
 		return nil, 0, err
 	}
 	return orders, total, nil
+}
+
+// StatsByStatus 按状态聚合采购单数量（忽略分页，复用其他筛选条件）
+func (r *GormProcurementOrderRepository) StatsByStatus(filter ProcurementOrderListFilter) (map[string]int64, error) {
+	q := r.db.Model(&models.ProcurementOrder{})
+	if filter.ConnectionID > 0 {
+		q = q.Where("connection_id = ?", filter.ConnectionID)
+	}
+	// 注意：StatsByStatus 不应用 filter.Status，因为聚合的目的就是看各状态分布
+	if filter.LocalOrderNo != "" {
+		q = q.Where("local_order_no = ?", filter.LocalOrderNo)
+	}
+	if filter.UpstreamOrderNo != "" {
+		q = q.Where("upstream_order_no = ?", filter.UpstreamOrderNo)
+	}
+	if filter.CreatedFrom != nil {
+		q = q.Where("created_at >= ?", *filter.CreatedFrom)
+	}
+	if filter.CreatedTo != nil {
+		q = q.Where("created_at <= ?", *filter.CreatedTo)
+	}
+
+	type row struct {
+		Status string
+		Count  int64
+	}
+	var rows []row
+	if err := q.Select("status, COUNT(*) as count").Group("status").Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]int64, len(rows))
+	for _, item := range rows {
+		result[item.Status] = item.Count
+	}
+	return result, nil
 }
 
 // ListRetriable 获取需要重试的采购单

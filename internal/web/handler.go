@@ -1,0 +1,138 @@
+package web
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"io/fs"
+	"net/http"
+	"path"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+)
+
+// 保留路径，不能与 admin path 冲突或互为前缀。
+var reservedPaths = []string{"/api", "/uploads", "/health"}
+
+// ValidateAdminPath 校验 web.admin_path 配置项的合法性。
+// 规则：
+//   - 必须以 "/" 开头
+//   - 不能为 "/"（会与 user SPA 兜底冲突）
+//   - 不能以 "/" 结尾
+//   - 不能等于、不能是、也不能拥有 "/api"、"/uploads"、"/health" 任一作为前缀
+func ValidateAdminPath(p string) error {
+	if !strings.HasPrefix(p, "/") {
+		return fmt.Errorf("web.admin_path must start with '/', got %q", p)
+	}
+	if p == "/" {
+		return fmt.Errorf("web.admin_path cannot be '/' (conflicts with user SPA fallback)")
+	}
+	if strings.HasSuffix(p, "/") {
+		return fmt.Errorf("web.admin_path cannot end with '/', got %q", p)
+	}
+	for _, r := range reservedPaths {
+		if p == r || strings.HasPrefix(p, r+"/") || strings.HasPrefix(r, p+"/") {
+			return fmt.Errorf("web.admin_path %q conflicts with reserved path %q", p, r)
+		}
+	}
+	return nil
+}
+
+// 占位符：admin/index.html 中的 __DJ_ADMIN_BASE__ 启动时被替换为实际 admin path
+const adminBasePlaceholder = "__DJ_ADMIN_BASE__"
+
+// RegisterAdmin 在 prefix 前缀下挂载 admin SPA。
+//
+// 启动时从 fsys 读取 index.html，把 __DJ_ADMIN_BASE__ 一次性替换为 strings.Trim(prefix, "/")，
+// 然后缓存。后续请求走该缓存，不做实时替换。
+//
+// 路由匹配规则：
+//   - GET prefix + "/*filepath"
+//   - filepath 为空 / "/" / "/index.html" → 返回缓存的 index.html
+//   - filepath 在 fsys 中有真实文件 → 用 http.FileServer 服务该文件
+//   - 否则（SPA history 深层路由）→ 返回缓存的 index.html
+func RegisterAdmin(r *gin.Engine, prefix string, fsys fs.FS) error {
+	if r == nil {
+		return errors.New("nil gin engine")
+	}
+	if fsys == nil {
+		return errors.New("nil admin filesystem")
+	}
+
+	raw, err := fs.ReadFile(fsys, "index.html")
+	if err != nil {
+		return fmt.Errorf("read admin/index.html: %w", err)
+	}
+	// 注意：base href 必须是绝对路径（带前导 /），否则浏览器会基于当前 URL
+	// 解析出 prefix/prefix/ 的双重前缀（例如访问 /admin/orders 时资源 URL 会
+	// 错误解析为 /admin/orders/admin/assets/...），导致深层路由刷新后 404。
+	cached := bytes.ReplaceAll(raw, []byte(adminBasePlaceholder), []byte("/"+strings.Trim(prefix, "/")))
+
+	fileServer := http.StripPrefix(prefix, http.FileServer(http.FS(fsys)))
+
+	r.GET(prefix+"/*filepath", func(c *gin.Context) {
+		fp := strings.TrimPrefix(c.Param("filepath"), "/")
+		if fp == "" || fp == "index.html" {
+			c.Data(http.StatusOK, "text/html; charset=utf-8", cached)
+			return
+		}
+		if hasFile(fsys, fp) {
+			fileServer.ServeHTTP(c.Writer, c.Request)
+			return
+		}
+		c.Data(http.StatusOK, "text/html; charset=utf-8", cached)
+	})
+	return nil
+}
+
+// RegisterUser 把 user SPA 挂载到 NoRoute 兜底位置。
+//
+// 由于 NoRoute 在所有显式路由（API、uploads、health、admin）之后才匹配，
+// 这里不需要做路径前缀剥离；命中真实文件返回文件，否则 fallback 到 index.html。
+func RegisterUser(r *gin.Engine, fsys fs.FS) error {
+	if r == nil {
+		return errors.New("nil gin engine")
+	}
+	if fsys == nil {
+		return errors.New("nil user filesystem")
+	}
+
+	indexCached, err := fs.ReadFile(fsys, "index.html")
+	if err != nil {
+		return fmt.Errorf("read user/index.html: %w", err)
+	}
+
+	fileServer := http.FileServer(http.FS(fsys))
+
+	r.NoRoute(func(c *gin.Context) {
+		fp := strings.TrimPrefix(c.Request.URL.Path, "/")
+		if fp == "" || fp == "index.html" {
+			c.Data(http.StatusOK, "text/html; charset=utf-8", indexCached)
+			return
+		}
+		if hasFile(fsys, fp) {
+			fileServer.ServeHTTP(c.Writer, c.Request)
+			return
+		}
+		c.Data(http.StatusOK, "text/html; charset=utf-8", indexCached)
+	})
+	return nil
+}
+
+func hasFile(fsys fs.FS, name string) bool {
+	name = path.Clean(name)
+	if name == "." || name == "/" {
+		return false
+	}
+	f, err := fsys.Open(name)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	stat, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return !stat.IsDir()
+}

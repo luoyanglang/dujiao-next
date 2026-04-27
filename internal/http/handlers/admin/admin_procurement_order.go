@@ -41,12 +41,18 @@ func (h *Handler) GetProcurementOrders(c *gin.Context) {
 	if upstreamOrderNo := strings.TrimSpace(c.Query("upstream_order_no")); upstreamOrderNo != "" {
 		filter.UpstreamOrderNo = upstreamOrderNo
 	}
-	if createdFrom := strings.TrimSpace(c.Query("created_from")); createdFrom != "" {
-		filter.CreatedFrom = createdFrom
+	createdFrom, err := shared.ParseTimeNullable(strings.TrimSpace(c.Query("created_from")))
+	if err != nil {
+		shared.RespondError(c, response.CodeBadRequest, "error.bad_request", err)
+		return
 	}
-	if createdTo := strings.TrimSpace(c.Query("created_to")); createdTo != "" {
-		filter.CreatedTo = createdTo
+	filter.CreatedFrom = createdFrom
+	createdTo, err := shared.ParseTimeNullable(strings.TrimSpace(c.Query("created_to")))
+	if err != nil {
+		shared.RespondError(c, response.CodeBadRequest, "error.bad_request", err)
+		return
 	}
+	filter.CreatedTo = createdTo
 
 	orders, total, err := h.ProcurementOrderService.List(filter)
 	if err != nil {
@@ -56,6 +62,54 @@ func (h *Handler) GetProcurementOrders(c *gin.Context) {
 
 	pagination := response.BuildPagination(page, pageSize, total)
 	response.SuccessWithPage(c, orders, pagination)
+}
+
+// GetProcurementOrderStats 采购单按状态聚合（基于全量数据，仅复用筛选条件）
+func (h *Handler) GetProcurementOrderStats(c *gin.Context) {
+	if h.ProcurementOrderService == nil {
+		shared.RespondErrorWithMsg(c, response.CodeInternal, "service not available", nil)
+		return
+	}
+
+	filter := repository.ProcurementOrderListFilter{}
+	if connID := strings.TrimSpace(c.Query("connection_id")); connID != "" {
+		if id, err := shared.ParseQueryUint(connID, false); err == nil {
+			filter.ConnectionID = id
+		}
+	}
+	if orderNo := strings.TrimSpace(c.Query("order_no")); orderNo != "" {
+		filter.LocalOrderNo = orderNo
+	}
+	if upstreamOrderNo := strings.TrimSpace(c.Query("upstream_order_no")); upstreamOrderNo != "" {
+		filter.UpstreamOrderNo = upstreamOrderNo
+	}
+	createdFrom, err := shared.ParseTimeNullable(strings.TrimSpace(c.Query("created_from")))
+	if err != nil {
+		shared.RespondError(c, response.CodeBadRequest, "error.bad_request", err)
+		return
+	}
+	filter.CreatedFrom = createdFrom
+	createdTo, err := shared.ParseTimeNullable(strings.TrimSpace(c.Query("created_to")))
+	if err != nil {
+		shared.RespondError(c, response.CodeBadRequest, "error.bad_request", err)
+		return
+	}
+	filter.CreatedTo = createdTo
+
+	stats, err := h.ProcurementOrderService.StatsByStatus(filter)
+	if err != nil {
+		shared.RespondError(c, response.CodeInternal, "error.procurement_fetch_failed", err)
+		return
+	}
+
+	var total int64
+	for _, v := range stats {
+		total += v
+	}
+	response.Success(c, gin.H{
+		"total":     total,
+		"by_status": stats,
+	})
 }
 
 // GetProcurementOrder 采购单详情

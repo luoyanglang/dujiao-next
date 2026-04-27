@@ -17,6 +17,7 @@ import (
 	"github.com/dujiao-next/internal/http/response"
 	"github.com/dujiao-next/internal/logger"
 	"github.com/dujiao-next/internal/provider"
+	"github.com/dujiao-next/internal/web"
 
 	"github.com/gin-gonic/gin"
 )
@@ -263,6 +264,7 @@ func SetupRouter(cfg *config.Config, c *provider.Container) *gin.Engine {
 				authorized.POST("/posts", adminHandler.CreatePost)
 				authorized.PUT("/posts/:id", adminHandler.UpdatePost)
 				authorized.DELETE("/posts/:id", adminHandler.DeletePost)
+				authorized.GET("/posts/:id/products", adminHandler.GetAdminPostProductIDs)
 
 				// Banner 管理
 				authorized.GET("/banners", adminHandler.GetAdminBanners)
@@ -443,6 +445,7 @@ func SetupRouter(cfg *config.Config, c *provider.Container) *gin.Engine {
 
 				// 采购单管理
 				authorized.GET("/procurement-orders", adminHandler.GetProcurementOrders)
+				authorized.GET("/procurement-orders/stats", adminHandler.GetProcurementOrderStats)
 				authorized.GET("/procurement-orders/:id", adminHandler.GetProcurementOrder)
 				authorized.GET("/procurement-orders/:id/upstream-payload/download", adminHandler.DownloadProcurementUpstreamPayload)
 				authorized.POST("/procurement-orders/:id/retry", adminHandler.RetryProcurementOrder)
@@ -481,6 +484,19 @@ func SetupRouter(cfg *config.Config, c *provider.Container) *gin.Engine {
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+
+	// 嵌入式前端资源（仅在 -tags fullstack 构建时生效）
+	if web.Enabled() {
+		if err := web.ValidateAdminPath(cfg.Web.AdminPath); err != nil {
+			log.Sugar().Fatalf("web.admin_path 配置错误: %v", err)
+		}
+		if err := web.RegisterAdmin(r, cfg.Web.AdminPath, web.AdminFS()); err != nil {
+			log.Sugar().Fatalf("注册 admin SPA 失败: %v", err)
+		}
+		if err := web.RegisterUser(r, web.UserFS()); err != nil {
+			log.Sugar().Fatalf("注册 user SPA 失败: %v", err)
+		}
+	}
 
 	return r
 }

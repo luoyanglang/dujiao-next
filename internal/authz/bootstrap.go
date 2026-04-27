@@ -118,6 +118,7 @@ func BuiltinRoleSeeds() []RoleSeed {
 				{Object: "/admin/product-mappings/batch-status", Action: "POST"},
 				{Object: "/admin/product-mappings/batch-delete", Action: "POST"},
 				{Object: "/admin/procurement-orders", Action: "GET"},
+				{Object: "/admin/procurement-orders/stats", Action: "GET"},
 				{Object: "/admin/procurement-orders/:id", Action: "GET"},
 				{Object: "/admin/procurement-orders/:id/upstream-payload/download", Action: "GET"},
 				{Object: "/admin/procurement-orders/:id/retry", Action: "POST"},

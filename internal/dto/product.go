@@ -38,6 +38,9 @@ type ProductResp struct {
 	PromotionPriceAmount *models.Money       `json:"promotion_price_amount,omitempty"`
 	PromotionRules       []PromotionRuleResp `json:"promotion_rules,omitempty"`
 	MemberPrices         []MemberLevelPrice  `json:"member_prices,omitempty"`
+
+	// 关联文章（仅商品详情接口填充，列表接口不返回）
+	RelatedPosts []RelatedPostCard `json:"related_posts,omitempty"`
 }
 
 // SKUResp 商品 SKU 公共响应
