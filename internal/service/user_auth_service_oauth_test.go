@@ -81,12 +81,12 @@ func TestLoginWithTelegramAllowsExistingIdentityWhenRegistrationDisabled(t *test
 
 	now := time.Now()
 	user := &models.User{
-		Email:       telegramidentity.BuildPlaceholderEmail("10002"),
+		Email:        telegramidentity.BuildPlaceholderEmail("10002"),
 		PasswordHash: "telegram-auto",
-		DisplayName: "TG Existing",
-		Status:      constants.UserStatusActive,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		DisplayName:  "TG Existing",
+		Status:       constants.UserStatusActive,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 	if err := db.Create(user).Error; err != nil {
 		t.Fatalf("create user failed: %v", err)
@@ -109,7 +109,7 @@ func TestLoginWithTelegramAllowsExistingIdentityWhenRegistrationDisabled(t *test
 		t.Fatalf("disable registration failed: %v", err)
 	}
 
-	gotUser, token, expiresAt, err := svc.loginWithVerifiedTelegram(&TelegramIdentityVerified{
+	res, err := svc.loginWithVerifiedTelegram(&TelegramIdentityVerified{
 		Provider:       constants.UserOAuthProviderTelegram,
 		ProviderUserID: "10002",
 		Username:       "tg_existing",
@@ -118,13 +118,13 @@ func TestLoginWithTelegramAllowsExistingIdentityWhenRegistrationDisabled(t *test
 	if err != nil {
 		t.Fatalf("loginWithVerifiedTelegram returned error: %v", err)
 	}
-	if gotUser == nil || gotUser.ID != user.ID {
-		t.Fatalf("expected existing user %d, got %+v", user.ID, gotUser)
+	if res.User == nil || res.User.ID != user.ID {
+		t.Fatalf("expected existing user %d, got %+v", user.ID, res.User)
 	}
-	if token == "" {
+	if res.Token == "" {
 		t.Fatalf("expected token")
 	}
-	if expiresAt.Before(time.Now()) {
+	if res.ExpiresAt.Before(time.Now()) {
 		t.Fatalf("expected future expiresAt")
 	}
 }
@@ -149,11 +149,11 @@ func TestTelegramMiniAppLoginReturnsRegistrationDisabledWhenCreatingNewUser(t *t
 	}
 
 	initData := buildTestTelegramMiniAppInitData(t, "test-bot-token", time.Now().Unix(), `{"id":10003,"first_name":"Mini","last_name":"Blocked","username":"mini_blocked"}`)
-	user, token, expiresAt, err := svc.LoginWithTelegramMiniApp(LoginWithTelegramMiniAppInput{
+	res, err := svc.LoginWithTelegramMiniApp(LoginWithTelegramMiniAppInput{
 		InitData: initData,
 		Context:  context.Background(),
 	})
 	if !errors.Is(err, ErrRegistrationDisabled) {
-		t.Fatalf("expected ErrRegistrationDisabled, got user=%v token=%q expiresAt=%v err=%v", user, token, expiresAt, err)
+		t.Fatalf("expected ErrRegistrationDisabled, got res=%+v err=%v", res, err)
 	}
 }

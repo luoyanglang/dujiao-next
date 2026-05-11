@@ -31,7 +31,7 @@ func TestShouldUseGatewayOrderNo(t *testing.T) {
 		{
 			name: "epusdt",
 			channel: &models.PaymentChannel{
-				ProviderType: constants.PaymentProviderEpusdt,
+				ProviderType: constants.PaymentProviderBepusdt,
 			},
 			want: true,
 		},
@@ -69,7 +69,7 @@ func TestShouldUseGatewayOrderNo(t *testing.T) {
 }
 
 func TestResolveGatewayOrderNo(t *testing.T) {
-	channel := &models.PaymentChannel{ProviderType: constants.PaymentProviderEpusdt}
+	channel := &models.PaymentChannel{ProviderType: constants.PaymentProviderBepusdt}
 	payment := &models.Payment{ID: 123}
 
 	gotFirst := resolveGatewayOrderNo(channel, payment)
@@ -109,7 +109,7 @@ func TestResolveGatewayOrderNo(t *testing.T) {
 	}
 }
 
-func TestApplyProviderPaymentUsesGatewayOrderNoForEpusdt(t *testing.T) {
+func TestApplyProviderPaymentUsesGatewayOrderNoForBepusdt(t *testing.T) {
 	svc, db := setupPaymentServiceWalletTest(t)
 	now := time.Now()
 
@@ -146,7 +146,7 @@ func TestApplyProviderPaymentUsesGatewayOrderNoForEpusdt(t *testing.T) {
 	defer server.Close()
 
 	channel := &models.PaymentChannel{
-		ProviderType:    constants.PaymentProviderEpusdt,
+		ProviderType:    constants.PaymentProviderBepusdt,
 		ChannelType:     constants.PaymentChannelTypeUsdtTrc20,
 		InteractionMode: constants.PaymentInteractionRedirect,
 		FeeRate:         models.NewMoneyFromDecimal(decimal.Zero),
@@ -459,7 +459,7 @@ func TestHandleCallbackAcceptsGatewayOrderNoForOrderPayment(t *testing.T) {
 	payment := &models.Payment{
 		OrderID:         order.ID,
 		ChannelID:       1,
-		ProviderType:    constants.PaymentProviderEpusdt,
+		ProviderType:    constants.PaymentProviderBepusdt,
 		ChannelType:     constants.PaymentChannelTypeUsdtTrc20,
 		InteractionMode: constants.PaymentInteractionRedirect,
 		Amount:          models.NewMoneyFromDecimal(decimal.NewFromInt(88)),

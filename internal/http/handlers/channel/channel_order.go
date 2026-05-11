@@ -710,16 +710,18 @@ func buildChannelOrderPreviewResponse(preview *service.OrderPreview, locale stri
 	items := make([]gin.H, 0, len(preview.Items))
 	for _, item := range preview.Items {
 		items = append(items, gin.H{
-			"product_id":         item.ProductID,
-			"product_title":      resolveLocalizedJSON(item.TitleJSON, locale, "zh-CN"),
-			"sku_id":             item.SKUID,
-			"sku_name":           channelLocalizedValue(item.SKUSnapshotJSON["spec_values"], locale, "zh-CN"),
-			"quantity":           item.Quantity,
-			"unit_price":         item.UnitPrice.StringFixed(2),
-			"subtotal":           item.TotalPrice.StringFixed(2),
-			"coupon_discount":    item.CouponDiscount.StringFixed(2),
-			"promotion_discount": item.PromotionDiscount.StringFixed(2),
-			"fulfillment_type":   item.FulfillmentType,
+			"product_id":           item.ProductID,
+			"product_title":        resolveLocalizedJSON(item.TitleJSON, locale, "zh-CN"),
+			"sku_id":               item.SKUID,
+			"sku_name":             channelLocalizedValue(item.SKUSnapshotJSON["spec_values"], locale, "zh-CN"),
+			"quantity":             item.Quantity,
+			"original_unit_price":  item.OriginalUnitPrice.StringFixed(2),
+			"unit_price":           item.UnitPrice.StringFixed(2),
+			"original_total_price": item.OriginalTotalPrice.StringFixed(2),
+			"subtotal":             item.TotalPrice.StringFixed(2),
+			"coupon_discount":      item.CouponDiscount.StringFixed(2),
+			"promotion_discount":   item.PromotionDiscount.StringFixed(2),
+			"fulfillment_type":     item.FulfillmentType,
 		})
 	}
 	return gin.H{
@@ -787,17 +789,19 @@ func buildChannelOrderDetailResponse(order *models.Order, locale string) gin.H {
 			instructions = resolveLocalizedJSON(item.InstructionsJSON, locale, "zh-CN")
 		}
 		items = append(items, gin.H{
-			"product_id":         item.ProductID,
-			"product_title":      resolveLocalizedJSON(item.TitleJSON, locale, "zh-CN"),
-			"sku_id":             item.SKUID,
-			"sku_name":           channelLocalizedValue(item.SKUSnapshotJSON["spec_values"], locale, "zh-CN"),
-			"quantity":           item.Quantity,
-			"unit_price":         item.UnitPrice.StringFixed(2),
-			"subtotal":           item.TotalPrice.StringFixed(2),
-			"coupon_discount":    item.CouponDiscount.StringFixed(2),
-			"promotion_discount": item.PromotionDiscount.StringFixed(2),
-			"fulfillment_type":   item.FulfillmentType,
-			"instructions":       instructions,
+			"product_id":           item.ProductID,
+			"product_title":        resolveLocalizedJSON(item.TitleJSON, locale, "zh-CN"),
+			"sku_id":               item.SKUID,
+			"sku_name":             channelLocalizedValue(item.SKUSnapshotJSON["spec_values"], locale, "zh-CN"),
+			"quantity":             item.Quantity,
+			"original_unit_price":  item.OriginalUnitPrice.StringFixed(2),
+			"unit_price":           item.UnitPrice.StringFixed(2),
+			"original_total_price": item.OriginalTotalPrice.StringFixed(2),
+			"subtotal":             item.TotalPrice.StringFixed(2),
+			"coupon_discount":      item.CouponDiscount.StringFixed(2),
+			"promotion_discount":   item.PromotionDiscount.StringFixed(2),
+			"fulfillment_type":     item.FulfillmentType,
+			"instructions":         instructions,
 		})
 	}
 	resp["items"] = items

@@ -99,30 +99,31 @@ func (s *OrderService) buildOrderResult(input orderCreateParams) (*orderBuildRes
 		}
 		promoUnitPriceAmount := promoUnitPrice.Decimal.Round(2)
 
-		// 2. 计算会员价
-		memberUnitPrice := basePrice
-		itemMemberDiscount := decimal.Zero
-		if userMemberLevelID > 0 && s.memberLevelService != nil {
-			memberUnitPrice, _ = s.memberLevelService.ResolveMemberPrice(userMemberLevelID, product.ID, sku.ID, basePrice)
-		}
-
-		// 3. 取最低价（会员价 vs 活动价）
+		// 2. 先应用活动价，再在活动价基础上应用会员价
 		unitPriceAmount := promoUnitPriceAmount
 		promotionDiscount := decimal.Zero
-		if memberUnitPrice.LessThan(promoUnitPriceAmount) {
-			// 会员价更低，使用会员价
-			unitPriceAmount = memberUnitPrice
-			itemMemberDiscount = basePrice.Sub(memberUnitPrice).
-				Mul(decimal.NewFromInt(int64(item.Quantity))).
-				Round(2)
-			memberDiscountAmount = memberDiscountAmount.Add(itemMemberDiscount).Round(2)
-			promotion = nil // 不使用活动价
-		} else if promotion != nil && basePrice.GreaterThan(promoUnitPriceAmount) {
-			// 活动价更低或相等，使用活动价
+		if promotion != nil && basePrice.GreaterThan(promoUnitPriceAmount) {
 			promotionDiscount = basePrice.Sub(promoUnitPriceAmount).
 				Mul(decimal.NewFromInt(int64(item.Quantity))).
 				Round(2)
 			promotionDiscountAmount = promotionDiscountAmount.Add(promotionDiscount).Round(2)
+		}
+
+		itemMemberDiscount := decimal.Zero
+		if userMemberLevelID > 0 && s.memberLevelService != nil {
+			memberUnitPrice, _ := s.memberLevelService.ResolveMemberPrice(userMemberLevelID, product.ID, sku.ID, unitPriceAmount)
+			if memberUnitPrice.LessThan(unitPriceAmount) {
+				itemMemberDiscount = unitPriceAmount.Sub(memberUnitPrice).
+					Mul(decimal.NewFromInt(int64(item.Quantity))).
+					Round(2)
+				memberDiscountAmount = memberDiscountAmount.Add(itemMemberDiscount).Round(2)
+				unitPriceAmount = memberUnitPrice
+			}
+		}
+
+		// 3. 兼容活动规则命中但未形成实际优惠的情况
+		if promotion != nil && promotionDiscount.IsZero() && !basePrice.GreaterThan(promoUnitPriceAmount) {
+			promotion = nil
 		}
 
 		if unitPriceAmount.LessThanOrEqual(decimal.Zero) || productCurrency == "" {
@@ -147,8 +148,8 @@ func (s *OrderService) buildOrderResult(input orderCreateParams) (*orderBuildRes
 
 		manualSchemaSnapshot := models.JSON{}
 		manualSubmission := models.JSON{}
-		if fulfillmentType == constants.FulfillmentTypeManual ||
-			(fulfillmentType == constants.FulfillmentTypeUpstream && len(product.ManualFormSchemaJSON) > 0) {
+		if !input.SkipManualFormCheck && (fulfillmentType == constants.FulfillmentTypeManual ||
+			(fulfillmentType == constants.FulfillmentTypeUpstream && len(product.ManualFormSchemaJSON) > 0)) {
 			submission := resolveManualFormSubmission(manualFormData, product.ID, sku.ID)
 			normalizedSchema, normalizedSubmission, err := validateAndNormalizeManualForm(product.ManualFormSchemaJSON, submission)
 			if err != nil {
@@ -183,9 +184,11 @@ func (s *OrderService) buildOrderResult(input orderCreateParams) (*orderBuildRes
 				"image":       firstProductImage(product.Images),
 			},
 			Tags:                         product.Tags,
+			OriginalUnitPrice:            models.NewMoneyFromDecimal(basePrice),
 			UnitPrice:                    models.NewMoneyFromDecimal(unitPriceAmount),
 			CostPrice:                    sku.CostPriceAmount, // 成本价快照
 			Quantity:                     item.Quantity,
+			OriginalTotalPrice:           models.NewMoneyFromDecimal(baseTotal),
 			TotalPrice:                   models.NewMoneyFromDecimal(total),
 			MemberDiscount:               models.NewMoneyFromDecimal(itemMemberDiscount),
 			CouponDiscount:               models.NewMoneyFromDecimal(decimal.Zero),

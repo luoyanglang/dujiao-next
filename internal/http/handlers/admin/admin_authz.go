@@ -86,12 +86,14 @@ func (h *Handler) ListAuthzAdmins(c *gin.Context) {
 			return
 		}
 		items = append(items, gin.H{
-			"id":            admin.ID,
-			"username":      admin.Username,
-			"is_super":      admin.IsSuper,
-			"last_login_at": admin.LastLoginAt,
-			"created_at":    admin.CreatedAt,
-			"roles":         roles,
+			"id":              admin.ID,
+			"username":        admin.Username,
+			"is_super":        admin.IsSuper,
+			"last_login_at":   admin.LastLoginAt,
+			"created_at":      admin.CreatedAt,
+			"roles":           roles,
+			"totp_enabled":    admin.TOTPEnabledAt != nil,
+			"totp_enabled_at": admin.TOTPEnabledAt,
 		})
 	}
 

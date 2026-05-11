@@ -16,6 +16,16 @@ func GetUserID(c *gin.Context) (uint, bool) {
 	return GetContextUintWithKeys(c, "user_id", "error.user_id_invalid", "error.user_id_type_invalid")
 }
 
+// IsSuperAdmin 从上下文读取超级管理员标记（由 admin JWT 中间件注入）
+func IsSuperAdmin(c *gin.Context) bool {
+	v, ok := c.Get("admin_is_super")
+	if !ok {
+		return false
+	}
+	b, _ := v.(bool)
+	return b
+}
+
 // GetContextUintWithKeys 从上下文读取 uint 值并统一处理错误响应。
 func GetContextUintWithKeys(c *gin.Context, key, invalidKey, typeInvalidKey string) (uint, bool) {
 	value, exists := c.Get(key)

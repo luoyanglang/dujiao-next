@@ -185,6 +185,16 @@ type AuthzAuditLogListFilter struct {
 	CreatedTo       *time.Time
 }
 
+// AdminLoginLogListFilter 查询后台管理员登录日志列表的过滤条件
+type AdminLoginLogListFilter struct {
+	Page      int
+	PageSize  int
+	AdminID   *uint
+	Username  string
+	EventType string
+	Status    string
+}
+
 // NotificationLogListFilter 查询通知发送日志列表的过滤条件
 type NotificationLogListFilter struct {
 	Page        int

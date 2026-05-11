@@ -22,6 +22,7 @@ func setupProductRepositoryTest(t *testing.T) (*GormProductRepository, *gorm.DB)
 		t.Fatalf("open sqlite failed: %v", err)
 	}
 	if err := db.AutoMigrate(
+		&models.Category{},
 		&models.Product{},
 		&models.ProductSKU{},
 		&models.CardSecret{},
@@ -30,6 +31,15 @@ func setupProductRepositoryTest(t *testing.T) (*GormProductRepository, *gorm.DB)
 		&models.SKUMapping{},
 	); err != nil {
 		t.Fatalf("migrate product/sku/card_secret/mappings failed: %v", err)
+	}
+	defaultCategory := models.Category{
+		ID:       1,
+		Slug:     "default-test-category",
+		NameJSON: models.JSON{"zh-CN": "default"},
+		IsActive: true,
+	}
+	if err := db.Create(&defaultCategory).Error; err != nil {
+		t.Fatalf("seed default category failed: %v", err)
 	}
 	return NewProductRepository(db), db
 }

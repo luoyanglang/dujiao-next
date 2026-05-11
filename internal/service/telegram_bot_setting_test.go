@@ -2,6 +2,53 @@ package service
 
 import "testing"
 
+func TestNormalizeMenuItemsBackfillsBuiltinKeys(t *testing.T) {
+	t.Parallel()
+
+	// 模拟老库数据：只有 3 项内置菜单
+	items := []TelegramBotMenuItem{
+		{Key: "shop_home", Enabled: true, Order: 1, Action: TelegramBotMenuAction{Type: "builtin"}},
+		{Key: "my_orders", Enabled: false, Order: 2, Action: TelegramBotMenuAction{Type: "builtin"}},
+		{Key: "contact_support", Enabled: true, Order: 3, Action: TelegramBotMenuAction{Type: "builtin"}},
+	}
+	normalized := normalizeMenuItems(items)
+
+	keys := map[string]TelegramBotMenuItem{}
+	for _, it := range normalized {
+		keys[it.Key] = it
+	}
+	for _, want := range builtinMenuKeysOrder {
+		if _, ok := keys[want]; !ok {
+			t.Fatalf("expected builtin key %q to be backfilled, got=%v", want, keys)
+		}
+	}
+	// 已有项的 enabled 状态应保留（my_orders 仍为 false）
+	if keys["my_orders"].Enabled {
+		t.Fatalf("expected existing my_orders enabled=false to be preserved")
+	}
+	// 新补齐的内置项默认 enabled=true
+	if !keys["affiliate"].Enabled {
+		t.Fatalf("expected backfilled affiliate to default enabled=true")
+	}
+	if !keys["gift_card"].Enabled {
+		t.Fatalf("expected backfilled gift_card to default enabled=true")
+	}
+}
+
+func TestTelegramBotConfigDefaultIncludesAllBuiltinMenu(t *testing.T) {
+	t.Parallel()
+
+	cfg := TelegramBotConfigDefault()
+	if len(cfg.Menu.Items) != len(builtinMenuKeysOrder) {
+		t.Fatalf("expected %d builtin menu items in default seed, got=%d", len(builtinMenuKeysOrder), len(cfg.Menu.Items))
+	}
+	for i, want := range builtinMenuKeysOrder {
+		if cfg.Menu.Items[i].Key != want {
+			t.Fatalf("expected default menu[%d].Key=%q, got=%q", i, want, cfg.Menu.Items[i].Key)
+		}
+	}
+}
+
 func TestTelegramBotConfigHelpRoundTrip(t *testing.T) {
 	t.Parallel()
 

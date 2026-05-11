@@ -188,6 +188,12 @@ func JWTAuthMiddleware(secretKey string, adminRepo repository.AdminRepository) g
 			c.Abort()
 			return
 		}
+		if !service.IsAccessTokenTyp(claims.Typ) {
+			msg := i18n.T(i18n.ResolveLocale(c), "error.token_invalid")
+			response.Unauthorized(c, msg)
+			c.Abort()
+			return
+		}
 
 		if cached, hit, cacheErr := cache.GetAdminAuthState(c.Request.Context(), claims.AdminID); cacheErr == nil && hit && cached != nil {
 			if claims.TokenVersion != cached.TokenVersion || !isIssuedAfterInvalidBeforeUnix(claims.IssuedAt, cached.TokenInvalidBefore) {
@@ -344,6 +350,12 @@ func UserJWTAuthMiddleware(secretKey string, userRepo repository.UserRepository)
 			return []byte(secretKey), nil
 		})
 		if err != nil || !token.Valid || claims.UserID == 0 {
+			msg := i18n.T(i18n.ResolveLocale(c), "error.token_invalid")
+			response.Unauthorized(c, msg)
+			c.Abort()
+			return
+		}
+		if !service.IsAccessTokenTyp(claims.Typ) {
 			msg := i18n.T(i18n.ResolveLocale(c), "error.token_invalid")
 			response.Unauthorized(c, msg)
 			c.Abort()

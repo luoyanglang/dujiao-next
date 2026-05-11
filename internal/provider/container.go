@@ -43,6 +43,7 @@ type Container struct {
 	UserLoginLogRepo       repository.UserLoginLogRepository
 	AuthzAuditLogRepo      repository.AuthzAuditLogRepository
 	NotificationLogRepo    repository.NotificationLogRepository
+	AdminLoginLogRepo      repository.AdminLoginLogRepository
 	DashboardRepo          repository.DashboardRepository
 	AffiliateRepo          repository.AffiliateRepository
 	ApiCredentialRepo      repository.ApiCredentialRepository
@@ -62,6 +63,8 @@ type Container struct {
 	// Services
 	AuthzService              *authz.Service
 	AuthService               *service.AuthService
+	TOTPService               *service.TOTPService
+	UserTOTPService           *service.UserTOTPService
 	UserAuthService           *service.UserAuthService
 	TelegramAuthService       *service.TelegramAuthService
 	EmailService              *service.EmailService
@@ -71,6 +74,7 @@ type Container struct {
 	PostService               *service.PostService
 	CategoryService           *service.CategoryService
 	SettingService            *service.SettingService
+	SitemapService            *service.SitemapService
 	CartService               *service.CartService
 	WalletService             *service.WalletService
 	OrderRefundService        *service.OrderRefundService
@@ -162,6 +166,7 @@ func (c *Container) initRepositories() {
 	c.UserLoginLogRepo = repository.NewUserLoginLogRepository(db)
 	c.AuthzAuditLogRepo = repository.NewAuthzAuditLogRepository(db)
 	c.NotificationLogRepo = repository.NewNotificationLogRepository(db)
+	c.AdminLoginLogRepo = repository.NewAdminLoginLogRepository(db)
 	c.DashboardRepo = repository.NewDashboardRepository(db)
 	c.AffiliateRepo = repository.NewAffiliateRepository(db)
 	c.ApiCredentialRepo = repository.NewApiCredentialRepository(db)
@@ -216,6 +221,8 @@ func (c *Container) initServices() {
 	c.EmailService = service.NewEmailService(&c.Config.Email)
 	c.CaptchaService = service.NewCaptchaService(c.SettingService, c.Config.Captcha)
 	c.AuthService = service.NewAuthService(c.Config, c.AdminRepo)
+	c.TOTPService = service.NewTOTPService(c.Config, c.AdminRepo, cache.Client())
+	c.UserTOTPService = service.NewUserTOTPService(c.Config, c.UserRepo, cache.Client())
 	c.TelegramAuthService = service.NewTelegramAuthService(c.Config.TelegramAuth)
 	c.UserAuthService = service.NewUserAuthService(c.Config, c.UserRepo, c.UserOAuthIdentityRepo, c.EmailVerifyCodeRepo, c.SettingService, c.EmailService, c.TelegramAuthService)
 	c.UploadService = service.NewUploadService(c.Config)
@@ -223,6 +230,7 @@ func (c *Container) initServices() {
 	c.ProductService = service.NewProductService(c.ProductRepo, c.ProductSKURepo, c.CardSecretRepo, c.CardSecretBatchRepo, c.CategoryRepo, c.MemberLevelPriceRepo, c.CartRepo, c.ProductMappingRepo, c.OrderRepo)
 	c.PostService = service.NewPostService(c.PostRepo)
 	c.CategoryService = service.NewCategoryService(c.CategoryRepo)
+	c.SitemapService = service.NewSitemapService(c.ProductRepo, c.CategoryRepo, c.PostRepo)
 	c.CartService = service.NewCartService(c.CartRepo, c.ProductRepo, c.ProductSKURepo, c.PromotionRepo, c.SettingService)
 	c.WalletService = service.NewWalletService(c.WalletRepo, c.OrderRepo, c.UserRepo, c.AffiliateService, c.SettingService)
 	c.OrderRefundService = service.NewOrderRefundService(c.OrderRepo, c.UserRepo, c.OrderRefundRecordRepo, c.AffiliateService, c.SettingService)

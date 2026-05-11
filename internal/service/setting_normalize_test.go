@@ -72,6 +72,7 @@ func TestUpdateSiteSettingNormalized(t *testing.T) {
 		"brand": map[string]interface{}{
 			"site_name": 123,
 			"site_url":  "  https://example.com/path/  ",
+			"site_icon": "  /uploads/site/icon.png  ",
 		},
 		"contact": map[string]interface{}{
 			"telegram": "  https://t.me/demo  ",
@@ -167,6 +168,9 @@ func TestUpdateSiteSettingNormalized(t *testing.T) {
 	}
 	if brand["site_url"] != "https://example.com/path" {
 		t.Fatalf("unexpected brand.site_url: %v", brand["site_url"])
+	}
+	if brand["site_icon"] != "/uploads/site/icon.png" {
+		t.Fatalf("unexpected brand.site_icon: %v", brand["site_icon"])
 	}
 
 	contact, ok := result["contact"].(map[string]interface{})
@@ -328,6 +332,9 @@ func TestUpdateSiteSettingNormalizedDefaultAbout(t *testing.T) {
 		t.Fatalf("unexpected default brand payload: %+v", brand)
 	}
 	if brand["site_url"] != "" {
+		t.Fatalf("unexpected default brand payload: %+v", brand)
+	}
+	if brand["site_icon"] != "" {
 		t.Fatalf("unexpected default brand payload: %+v", brand)
 	}
 	scripts, ok := result["scripts"].([]interface{})

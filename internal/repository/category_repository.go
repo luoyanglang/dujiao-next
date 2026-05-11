@@ -11,9 +11,11 @@ import (
 // CategoryRepository 分类数据访问接口
 type CategoryRepository interface {
 	List() ([]models.Category, error)
+	ListActive() ([]models.Category, error)
 	GetByID(id string) (*models.Category, error)
 	Create(category *models.Category) error
 	Update(category *models.Category) error
+	UpdateActive(id string, active bool) error
 	Delete(id string) error
 	CountBySlug(slug string, excludeID *string) (int64, error)
 	CountChildren(categoryID string) (int64, error)
@@ -41,6 +43,15 @@ func (r *GormCategoryRepository) List() ([]models.Category, error) {
 	return categories, nil
 }
 
+// ListActive 启用的分类列表
+func (r *GormCategoryRepository) ListActive() ([]models.Category, error) {
+	var categories []models.Category
+	if err := r.db.Where("is_active = ?", true).Order("sort_order DESC, id ASC").Find(&categories).Error; err != nil {
+		return nil, err
+	}
+	return categories, nil
+}
+
 // GetByID 根据 ID 获取分类
 func (r *GormCategoryRepository) GetByID(id string) (*models.Category, error) {
 	var category models.Category
@@ -61,6 +72,11 @@ func (r *GormCategoryRepository) Create(category *models.Category) error {
 // Update 更新分类
 func (r *GormCategoryRepository) Update(category *models.Category) error {
 	return r.db.Save(category).Error
+}
+
+// UpdateActive 更新启用状态
+func (r *GormCategoryRepository) UpdateActive(id string, active bool) error {
+	return r.db.Model(&models.Category{}).Where("id = ?", id).Update("is_active", active).Error
 }
 
 // Delete 删除分类

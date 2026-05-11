@@ -34,7 +34,8 @@ type Config struct {
 
 // AppConfig 应用级配置
 type AppConfig struct {
-	SecretKey string `mapstructure:"secret_key"` // 通用加密密钥（AES-256，用于加密存储敏感信息）
+	SecretKey  string `mapstructure:"secret_key"`  // 通用加密密钥（AES-256，用于加密存储敏感信息）
+	TOTPIssuer string `mapstructure:"totp_issuer"` // 2FA 验证器中显示的发行方名称（避免使用 & 等特殊字符，Google Authenticator 解析容错差）
 }
 
 // ServerConfig 服务器配置
@@ -278,6 +279,7 @@ func Load() *Config {
 
 	// 设置默认值（可选）
 	viper.SetDefault("app.secret_key", "change-me-32-byte-secret-key!!")
+	viper.SetDefault("app.totp_issuer", "Dujiao-Next")
 	viper.SetDefault("server.host", "0.0.0.0")
 	viper.SetDefault("server.port", "8080")
 	viper.SetDefault("server.mode", "debug")

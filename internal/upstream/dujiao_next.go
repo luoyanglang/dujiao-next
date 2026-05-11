@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +18,30 @@ import (
 
 	"github.com/google/uuid"
 )
+
+// upstreamHTTPError 上游返回非 200 时的结构化错误
+type upstreamHTTPError struct {
+	Status  int
+	Code    string
+	Message string
+	Body    string
+}
+
+func (e *upstreamHTTPError) Error() string {
+	if e.Code != "" {
+		return fmt.Sprintf("upstream responded with status %d (%s): %s", e.Status, e.Code, e.Message)
+	}
+	return fmt.Sprintf("upstream responded with status %d: %s", e.Status, e.Body)
+}
+
+// extractUpstreamErrorCode 从错误链中提取 upstreamHTTPError.Code
+func extractUpstreamErrorCode(err error) string {
+	var ue *upstreamHTTPError
+	if errors.As(err, &ue) {
+		return ue.Code
+	}
+	return ""
+}
 
 // DujiaoNextAdapter Dujiao-Next 协议适配器
 type DujiaoNextAdapter struct {
@@ -63,7 +88,8 @@ func (a *DujiaoNextAdapter) ListCategories(ctx context.Context) (*CategoryListRe
 	}
 	if err := a.doRequest(ctx, http.MethodGet, "/api/v1/upstream/categories", nil, &result); err != nil {
 		// 旧版上游不支持分类 API，返回空列表
-		if strings.Contains(err.Error(), "status 404") {
+		var ue *upstreamHTTPError
+		if errors.As(err, &ue) && ue.Status == http.StatusNotFound {
 			return &CategoryListResult{Supported: false, Categories: []UpstreamCategory{}}, nil
 		}
 		return nil, err
@@ -77,6 +103,9 @@ func (a *DujiaoNextAdapter) ListProducts(ctx context.Context, opts ListProductsO
 	if opts.UpdatedAfter != nil {
 		path += "&updated_after=" + opts.UpdatedAfter.Format(time.RFC3339)
 	}
+	if opts.IncludeInactive {
+		path += "&include_inactive=true"
+	}
 	var result ProductListResult
 	if err := a.doRequest(ctx, http.MethodGet, path, nil, &result); err != nil {
 		return nil, err
@@ -85,6 +114,9 @@ func (a *DujiaoNextAdapter) ListProducts(ctx context.Context, opts ListProductsO
 }
 
 // GetProduct 获取单个商品详情
+// 上游已删除（软删）→ 返回 ErrUpstreamProductDeleted
+// 旧版上游对下架商品也返回 404 product_unavailable → 返回 ErrUpstreamProductUnavailable
+// 新版上游下架商品改为 200 + is_active=false，调用方应根据 IsActive 字段判断
 func (a *DujiaoNextAdapter) GetProduct(ctx context.Context, productID uint) (*UpstreamProduct, error) {
 	path := fmt.Sprintf("/api/v1/upstream/products/%d", productID)
 	var result struct {
@@ -92,6 +124,13 @@ func (a *DujiaoNextAdapter) GetProduct(ctx context.Context, productID uint) (*Up
 		Product UpstreamProduct `json:"product"`
 	}
 	if err := a.doRequest(ctx, http.MethodGet, path, nil, &result); err != nil {
+		// 解析上游返回的 error_code 归一化为哨兵错误
+		switch extractUpstreamErrorCode(err) {
+		case "product_deleted", "product_not_found":
+			return nil, ErrUpstreamProductDeleted
+		case "product_unavailable":
+			return nil, ErrUpstreamProductUnavailable
+		}
 		return nil, err
 	}
 	return &result.Product, nil
@@ -238,7 +277,18 @@ func (a *DujiaoNextAdapter) doRequest(ctx context.Context, method, path string, 
 		logger.Warnw("upstream_request_error",
 			"method", method, "path", path,
 			"status", resp.StatusCode, "body", string(respBody))
-		return fmt.Errorf("upstream responded with status %d: %s", resp.StatusCode, string(respBody))
+		// 尝试解析结构化错误响应
+		var errPayload struct {
+			ErrorCode    string `json:"error_code"`
+			ErrorMessage string `json:"error_message"`
+		}
+		_ = json.Unmarshal(respBody, &errPayload)
+		return &upstreamHTTPError{
+			Status:  resp.StatusCode,
+			Code:    errPayload.ErrorCode,
+			Message: errPayload.ErrorMessage,
+			Body:    string(respBody),
+		}
 	}
 
 	if result != nil {

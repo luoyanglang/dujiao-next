@@ -17,8 +17,12 @@ func BuiltinRoleSeeds() []RoleSeed {
 			Role: "readonly_auditor",
 			Policies: []Policy{
 				{Object: "/admin/*", Action: "GET"},
-				{Object: "/admin/password", Action: "PUT"},        // 所有管理员均可修改自己密码
-				{Object: "/admin/ads/impression", Action: "POST"}, // 广告曝光埋点，所有管理员可触发
+				{Object: "/admin/password", Action: "PUT"},                       // 所有管理员均可修改自己密码
+				{Object: "/admin/ads/impression", Action: "POST"},                // 广告曝光埋点，所有管理员可触发
+				{Object: "/admin/2fa/setup", Action: "POST"},                     // 自助绑定 2FA
+				{Object: "/admin/2fa/enable", Action: "POST"},                    // 自助启用 2FA
+				{Object: "/admin/2fa/disable", Action: "POST"},                   // 自助关闭 2FA
+				{Object: "/admin/2fa/recovery-codes/regenerate", Action: "POST"}, // 重新生成恢复码
 			},
 			Immutable: true,
 		},
@@ -30,6 +34,7 @@ func BuiltinRoleSeeds() []RoleSeed {
 				{Object: "/admin/products/:id", Action: "*"},
 				{Object: "/admin/categories", Action: "*"},
 				{Object: "/admin/categories/:id", Action: "*"},
+				{Object: "/admin/categories/:id/active", Action: "PATCH"},
 				{Object: "/admin/posts", Action: "*"},
 				{Object: "/admin/posts/:id", Action: "*"},
 				{Object: "/admin/banners", Action: "*"},
@@ -91,6 +96,7 @@ func BuiltinRoleSeeds() []RoleSeed {
 				{Object: "/admin/users/:id/wallet/transactions", Action: "GET"},
 				{Object: "/admin/users/:id/wallet/adjust", Action: "POST"},
 				{Object: "/admin/users/:id/member-level", Action: "PUT"},
+				{Object: "/admin/users/:id/2fa", Action: "DELETE"}, // 客服协助用户重置丢失 TOTP+恢复码 的 2FA
 				{Object: "/admin/user-login-logs", Action: "GET"},
 				{Object: "/admin/wallet/recharges", Action: "GET"},
 				{Object: "/admin/payments", Action: "GET"},
@@ -190,9 +196,12 @@ func BuiltinRoleSeeds() []RoleSeed {
 				{Object: "/admin/authz/admins", Action: "*"},
 				{Object: "/admin/authz/admins/:id", Action: "*"},
 				{Object: "/admin/authz/admins/:id/roles", Action: "*"},
+				{Object: "/admin/authz/admins/:id/2fa/reset", Action: "POST"}, // 超管重置目标管理员 2FA（handler 仍二次校验 isSuper）
 				{Object: "/admin/authz/policies", Action: "*"},
 				{Object: "/admin/authz/permissions/catalog", Action: "GET"},
 				{Object: "/admin/authz/audit-logs", Action: "GET"},
+				// 系统信息与版本检测
+				{Object: "/admin/system/version/check", Action: "GET"},
 				// 渠道客户端管理
 				{Object: "/admin/channel-clients", Action: "*"},
 				{Object: "/admin/channel-clients/:id", Action: "*"},

@@ -11,6 +11,7 @@ import (
 	"github.com/dujiao-next/internal/repository"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -50,13 +51,54 @@ func (s *AuthService) ValidatePassword(password string) error {
 	return validatePassword(s.cfg.Security.PasswordPolicy, password)
 }
 
+// JWT typ 常量
+const (
+	TokenTypAccess       = "access"
+	TokenTyp2FAChallenge = "2fa_challenge"
+)
+
+// IsAccessTokenTyp 判断 typ 是否为合法访问 token（空字符串兼容旧 token）
+func IsAccessTokenTyp(typ string) bool {
+	return typ == "" || typ == TokenTypAccess
+}
+
 // JWTClaims JWT 声明
 type JWTClaims struct {
 	AdminID      uint   `json:"admin_id"`
 	Username     string `json:"username"`
 	TokenVersion uint64 `json:"token_version"`
+	Typ          string `json:"typ,omitempty"`
 	jwt.RegisteredClaims
 }
+
+// ChallengeClaims 2FA 挑战 token 的 JWT claims
+//
+// 注：Typ 字段同时占用与 JWTClaims 兼容的 typ 键，写入 "2fa_challenge"，
+// 防止挑战 token 在被错误地解析为 JWTClaims 时通过中间件的 typ 校验。
+type ChallengeClaims struct {
+	AdminID uint   `json:"admin_id"`
+	JTI     string `json:"jti"`
+	Purpose string `json:"purpose"`
+	Typ     string `json:"typ"`
+	jwt.RegisteredClaims
+}
+
+// LoginResult 登录第一步结果
+type LoginResult struct {
+	RequiresTOTP       bool
+	Admin              *models.Admin
+	Token              string
+	ExpiresAt          time.Time
+	ChallengeToken     string
+	ChallengeJTI       string
+	ChallengeExpiresAt time.Time
+}
+
+// ChallengePurpose2FA 挑战 token 的 purpose 常量
+const ChallengePurpose2FA = "2fa_challenge"
+
+// ChallengeTokenTTL 挑战 token 有效期
+const ChallengeTokenTTL = 5 * time.Minute
 
 // GenerateJWT 生成 JWT Token
 func (s *AuthService) GenerateJWT(admin *models.Admin) (string, time.Time, error) {
@@ -66,6 +108,7 @@ func (s *AuthService) GenerateJWT(admin *models.Admin) (string, time.Time, error
 		AdminID:      admin.ID,
 		Username:     admin.Username,
 		TokenVersion: admin.TokenVersion,
+		Typ:          TokenTypAccess,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -100,39 +143,122 @@ func (s *AuthService) ParseJWT(tokenString string) (*JWTClaims, error) {
 	return nil, errors.New("无效的 token")
 }
 
-// Login 管理员登录
-func (s *AuthService) Login(username, password string) (*models.Admin, string, time.Time, error) {
-	// 查找管理员
+// Login 管理员登录（第一步）
+func (s *AuthService) Login(username, password string) (*LoginResult, error) {
 	admin, err := s.adminRepo.GetByUsername(username)
 	if err != nil {
-		return nil, "", time.Time{}, err
+		return nil, err
 	}
 	if admin == nil {
-		// 执行虚拟 bcrypt 比较以防止时序攻击泄露用户名是否存在
 		_ = bcrypt.CompareHashAndPassword([]byte("$2a$10$dummyhashtopreventtimingattacksxxxxxxxxxxxxxxxxxx"), []byte(password))
-		return nil, "", time.Time{}, ErrInvalidCredentials
+		return nil, ErrInvalidCredentials
 	}
-
-	// 验证密码
 	if err := s.VerifyPassword(admin.PasswordHash, password); err != nil {
-		return nil, "", time.Time{}, ErrInvalidCredentials
+		return nil, ErrInvalidCredentials
 	}
 
-	// 生成 JWT
+	// 已启用 2FA → 仅签发挑战 token
+	if admin.TOTPEnabledAt != nil {
+		challenge, jti, expiresAt, err := s.IssueChallengeToken(admin.ID)
+		if err != nil {
+			return nil, err
+		}
+		return &LoginResult{
+			RequiresTOTP:       true,
+			Admin:              admin,
+			ChallengeToken:     challenge,
+			ChallengeJTI:       jti,
+			ChallengeExpiresAt: expiresAt,
+		}, nil
+	}
+
+	// 未启用 → 直接发正式 JWT
 	token, expiresAt, err := s.GenerateJWT(admin)
 	if err != nil {
-		return nil, "", time.Time{}, err
+		return nil, err
 	}
-
-	// 更新最后登录时间
 	now := time.Now()
 	admin.LastLoginAt = &now
 	if err := s.adminRepo.Update(admin); err != nil {
-		return nil, "", time.Time{}, err
+		return nil, err
 	}
 	_ = cache.SetAdminAuthState(context.Background(), cache.BuildAdminAuthState(admin))
+	return &LoginResult{
+		RequiresTOTP: false,
+		Admin:        admin,
+		Token:        token,
+		ExpiresAt:    expiresAt,
+	}, nil
+}
 
-	return admin, token, expiresAt, nil
+// IssueChallengeToken 签发 2FA 挑战 token
+func (s *AuthService) IssueChallengeToken(adminID uint) (token, jti string, expiresAt time.Time, err error) {
+	jti = uuid.NewString()
+	expiresAt = time.Now().Add(ChallengeTokenTTL)
+	claims := ChallengeClaims{
+		AdminID: adminID,
+		JTI:     jti,
+		Purpose: ChallengePurpose2FA,
+		Typ:     TokenTyp2FAChallenge,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expiresAt),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			NotBefore: jwt.NewNumericDate(time.Now()),
+			ID:        jti,
+		},
+	}
+	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signed, err := t.SignedString([]byte(s.cfg.JWT.SecretKey))
+	if err != nil {
+		return "", "", time.Time{}, err
+	}
+	return signed, jti, expiresAt, nil
+}
+
+// ParseChallengeToken 解析并校验挑战 token
+func (s *AuthService) ParseChallengeToken(tokenString string) (*ChallengeClaims, error) {
+	parser := newHS256JWTParser()
+	tok, err := parser.ParseWithClaims(tokenString, &ChallengeClaims{}, func(token *jwt.Token) (interface{}, error) {
+		return []byte(s.cfg.JWT.SecretKey), nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	claims, ok := tok.Claims.(*ChallengeClaims)
+	if !ok || !tok.Valid {
+		return nil, errors.New("invalid challenge token")
+	}
+	if claims.Purpose != ChallengePurpose2FA || claims.Typ != TokenTyp2FAChallenge {
+		return nil, errors.New("invalid challenge purpose")
+	}
+	return claims, nil
+}
+
+// CompleteLoginAfter2FA 在 2FA 验证通过后完成登录：发正式 JWT、更新 last_login
+func (s *AuthService) CompleteLoginAfter2FA(adminID uint) (*LoginResult, error) {
+	admin, err := s.adminRepo.GetByID(adminID)
+	if err != nil {
+		return nil, err
+	}
+	if admin == nil {
+		return nil, ErrNotFound
+	}
+	token, expiresAt, err := s.GenerateJWT(admin)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	admin.LastLoginAt = &now
+	if err := s.adminRepo.Update(admin); err != nil {
+		return nil, err
+	}
+	_ = cache.SetAdminAuthState(context.Background(), cache.BuildAdminAuthState(admin))
+	return &LoginResult{RequiresTOTP: false, Admin: admin, Token: token, ExpiresAt: expiresAt}, nil
+}
+
+// AdminRepo 暴露给 handler 用（例如 2FA reset 后查 username）
+func (s *AuthService) AdminRepo() repository.AdminRepository {
+	return s.adminRepo
 }
 
 // ChangePassword 修改管理员密码

@@ -66,6 +66,7 @@ type CreateProductInput struct {
 	Images               []string
 	Tags                 []string
 	PurchaseType         string
+	MinPurchaseQuantity  *int
 	MaxPurchaseQuantity  *int
 	FulfillmentType      string
 	ManualStockTotal     *int
@@ -106,12 +107,13 @@ func (s *ProductService) ListPublic(categoryID, search string, page, pageSize in
 	return s.repo.List(filter)
 }
 
-// ListPublicUpdatedAfter 获取指定时间后更新的公开商品列表（供上游同步接口使用）
-func (s *ProductService) ListPublicUpdatedAfter(updatedAfter *time.Time, page, pageSize int) ([]models.Product, int64, error) {
+// ListForUpstreamSync 上游同步专用：可选包含已下架商品，便于下游识别下架状态
+// includeInactive=true 时返回所有未软删商品（含 is_active=false）
+func (s *ProductService) ListForUpstreamSync(updatedAfter *time.Time, includeInactive bool, page, pageSize int) ([]models.Product, int64, error) {
 	filter := repository.ProductListFilter{
 		Page:         page,
 		PageSize:     pageSize,
-		OnlyActive:   true,
+		OnlyActive:   !includeInactive,
 		WithCategory: true,
 		UpdatedAfter: updatedAfter,
 	}
@@ -217,6 +219,13 @@ func (s *ProductService) Create(input CreateProductInput) (*models.Product, erro
 	if input.MaxPurchaseQuantity != nil {
 		maxPurchaseQuantity = normalizeMaxPurchaseQuantity(*input.MaxPurchaseQuantity)
 	}
+	minPurchaseQuantity := 0
+	if input.MinPurchaseQuantity != nil {
+		minPurchaseQuantity = normalizeMinPurchaseQuantity(*input.MinPurchaseQuantity)
+	}
+	if minPurchaseQuantity > 0 && maxPurchaseQuantity > 0 && minPurchaseQuantity > maxPurchaseQuantity {
+		return nil, ErrProductPurchaseLimitInvalid
+	}
 
 	costPriceAmount := input.CostPriceAmount.Round(2)
 
@@ -247,6 +256,7 @@ func (s *ProductService) Create(input CreateProductInput) (*models.Product, erro
 		Images:               models.StringArray(input.Images),
 		Tags:                 models.StringArray(input.Tags),
 		PurchaseType:         purchaseType,
+		MinPurchaseQuantity:  minPurchaseQuantity,
 		MaxPurchaseQuantity:  maxPurchaseQuantity,
 		FulfillmentType:      fulfillmentType,
 		ManualStockTotal:     manualStockTotal,
@@ -344,6 +354,12 @@ func (s *ProductService) Update(id string, input CreateProductInput) (*models.Pr
 	product.PurchaseType = purchaseType
 	if input.MaxPurchaseQuantity != nil {
 		product.MaxPurchaseQuantity = normalizeMaxPurchaseQuantity(*input.MaxPurchaseQuantity)
+	}
+	if input.MinPurchaseQuantity != nil {
+		product.MinPurchaseQuantity = normalizeMinPurchaseQuantity(*input.MinPurchaseQuantity)
+	}
+	if product.MinPurchaseQuantity > 0 && product.MaxPurchaseQuantity > 0 && product.MinPurchaseQuantity > product.MaxPurchaseQuantity {
+		return nil, ErrProductPurchaseLimitInvalid
 	}
 	rawFulfillmentType := strings.TrimSpace(input.FulfillmentType)
 	if rawFulfillmentType == "" {
@@ -837,6 +853,9 @@ func expandPublicCategoryIDs(categoryRepo repository.CategoryRepository, categor
 	if category == nil {
 		return []uint{uint(parsedCategoryID)}, nil
 	}
+	if !category.IsActive {
+		return []uint{}, nil
+	}
 	if category.ParentID > 0 {
 		return []uint{category.ID}, nil
 	}
@@ -848,7 +867,7 @@ func expandPublicCategoryIDs(categoryRepo repository.CategoryRepository, categor
 
 	categoryIDs := []uint{category.ID}
 	for _, item := range categories {
-		if item.ParentID == category.ID {
+		if item.ParentID == category.ID && item.IsActive {
 			categoryIDs = append(categoryIDs, item.ID)
 		}
 	}

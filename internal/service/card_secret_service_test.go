@@ -1,7 +1,10 @@
 package service
 
 import (
+	"bytes"
 	"fmt"
+	"mime/multipart"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -34,6 +37,33 @@ func setupCardSecretServiceTestDB(t *testing.T) *gorm.DB {
 	}
 	models.DB = db
 	return db
+}
+
+func newCardSecretCSVFileHeader(t *testing.T, content string) *multipart.FileHeader {
+	t.Helper()
+	body := bytes.NewBuffer(nil)
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile("file", "card-secrets.csv")
+	if err != nil {
+		t.Fatalf("create csv form file failed: %v", err)
+	}
+	if _, err := part.Write([]byte(content)); err != nil {
+		t.Fatalf("write csv form file failed: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close csv multipart writer failed: %v", err)
+	}
+
+	req := httptest.NewRequest("POST", "/admin/card-secrets/import", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	if err := req.ParseMultipartForm(32 << 20); err != nil {
+		t.Fatalf("parse multipart form failed: %v", err)
+	}
+	_, fileHeader, err := req.FormFile("file")
+	if err != nil {
+		t.Fatalf("read multipart file header failed: %v", err)
+	}
+	return fileHeader
 }
 
 func TestCreateCardSecretBatchAutoMultiSKURequiresExplicitSKU(t *testing.T) {
@@ -151,6 +181,160 @@ func TestCreateCardSecretBatchAutoSingleActiveFallsBackToOnlyActiveSKU(t *testin
 	}
 	if batch.SKUID != onlyActiveSKU.ID {
 		t.Fatalf("batch sku_id want active %d got %d", onlyActiveSKU.ID, batch.SKUID)
+	}
+}
+
+func TestCreateCardSecretBatchDeduplicateOption(t *testing.T) {
+	db := setupCardSecretServiceTestDB(t)
+
+	product := &models.Product{
+		CategoryID:      1,
+		Slug:            "card-secret-deduplicate-option",
+		TitleJSON:       models.JSON{"zh-CN": "卡密去重商品"},
+		PriceAmount:     models.NewMoneyFromDecimal(decimal.NewFromInt(20)),
+		PurchaseType:    constants.ProductPurchaseMember,
+		FulfillmentType: constants.FulfillmentTypeAuto,
+		IsActive:        true,
+	}
+	if err := db.Create(product).Error; err != nil {
+		t.Fatalf("create product failed: %v", err)
+	}
+
+	defaultSKU := &models.ProductSKU{
+		ProductID:   product.ID,
+		SKUCode:     models.DefaultSKUCode,
+		PriceAmount: models.NewMoneyFromDecimal(decimal.NewFromInt(20)),
+		IsActive:    true,
+	}
+	if err := db.Create(defaultSKU).Error; err != nil {
+		t.Fatalf("create default sku failed: %v", err)
+	}
+
+	svc := NewCardSecretService(
+		repository.NewCardSecretRepository(db),
+		repository.NewCardSecretBatchRepository(db),
+		repository.NewProductRepository(db),
+		repository.NewProductSKURepository(db),
+	)
+
+	defaultBatch, created, err := svc.CreateCardSecretBatch(CreateCardSecretBatchInput{
+		ProductID: product.ID,
+		Secrets:   []string{"DEDUP-DEFAULT-001", "DEDUP-DEFAULT-001", "DEDUP-DEFAULT-002"},
+		BatchNo:   "DEDUP-DEFAULT",
+		Source:    constants.CardSecretSourceManual,
+	})
+	if err != nil {
+		t.Fatalf("create default deduplicate batch failed: %v", err)
+	}
+	if created != 2 || defaultBatch.TotalCount != 2 {
+		t.Fatalf("default deduplicate want created=2 total=2 got created=%d total=%d", created, defaultBatch.TotalCount)
+	}
+
+	keepDuplicates := false
+	duplicateBatch, created, err := svc.CreateCardSecretBatch(CreateCardSecretBatchInput{
+		ProductID:   product.ID,
+		Secrets:     []string{"DEDUP-OFF-001", "DEDUP-OFF-001", "DEDUP-OFF-002"},
+		BatchNo:     "DEDUP-OFF",
+		Source:      constants.CardSecretSourceManual,
+		Deduplicate: &keepDuplicates,
+	})
+	if err != nil {
+		t.Fatalf("create keep duplicate batch failed: %v", err)
+	}
+	if created != 3 || duplicateBatch.TotalCount != 3 {
+		t.Fatalf("keep duplicate want created=3 total=3 got created=%d total=%d", created, duplicateBatch.TotalCount)
+	}
+
+	items, total, err := svc.ListCardSecrets(ListCardSecretInput{
+		ProductID: product.ID,
+		BatchID:   duplicateBatch.ID,
+		Page:      1,
+		PageSize:  20,
+	})
+	if err != nil {
+		t.Fatalf("list duplicate batch failed: %v", err)
+	}
+	if total != 3 || len(items) != 3 {
+		t.Fatalf("duplicate batch list want total=3 len=3 got total=%d len=%d", total, len(items))
+	}
+	repeated := 0
+	for _, item := range items {
+		if item.Secret == "DEDUP-OFF-001" {
+			repeated++
+		}
+	}
+	if repeated != 2 {
+		t.Fatalf("expected repeated secret to be stored twice, got %d", repeated)
+	}
+}
+
+func TestImportCardSecretCSVKeepsDuplicatesWhenDeduplicateDisabled(t *testing.T) {
+	db := setupCardSecretServiceTestDB(t)
+
+	product := &models.Product{
+		CategoryID:      1,
+		Slug:            "card-secret-csv-deduplicate-option",
+		TitleJSON:       models.JSON{"zh-CN": "CSV 卡密去重商品"},
+		PriceAmount:     models.NewMoneyFromDecimal(decimal.NewFromInt(20)),
+		PurchaseType:    constants.ProductPurchaseMember,
+		FulfillmentType: constants.FulfillmentTypeAuto,
+		IsActive:        true,
+	}
+	if err := db.Create(product).Error; err != nil {
+		t.Fatalf("create product failed: %v", err)
+	}
+
+	defaultSKU := &models.ProductSKU{
+		ProductID:   product.ID,
+		SKUCode:     models.DefaultSKUCode,
+		PriceAmount: models.NewMoneyFromDecimal(decimal.NewFromInt(20)),
+		IsActive:    true,
+	}
+	if err := db.Create(defaultSKU).Error; err != nil {
+		t.Fatalf("create default sku failed: %v", err)
+	}
+
+	svc := NewCardSecretService(
+		repository.NewCardSecretRepository(db),
+		repository.NewCardSecretBatchRepository(db),
+		repository.NewProductRepository(db),
+		repository.NewProductSKURepository(db),
+	)
+
+	keepDuplicates := false
+	batch, created, err := svc.ImportCardSecretCSV(ImportCardSecretCSVInput{
+		ProductID:   product.ID,
+		File:        newCardSecretCSVFileHeader(t, "secret\nCSV-DUP-001\nCSV-DUP-001\nCSV-DUP-002\n"),
+		BatchNo:     "CSV-DEDUP-OFF",
+		Deduplicate: &keepDuplicates,
+	})
+	if err != nil {
+		t.Fatalf("import csv with duplicate secrets failed: %v", err)
+	}
+	if created != 3 || batch.TotalCount != 3 {
+		t.Fatalf("csv keep duplicate want created=3 total=3 got created=%d total=%d", created, batch.TotalCount)
+	}
+
+	items, total, err := svc.ListCardSecrets(ListCardSecretInput{
+		ProductID: product.ID,
+		BatchID:   batch.ID,
+		Page:      1,
+		PageSize:  20,
+	})
+	if err != nil {
+		t.Fatalf("list csv duplicate batch failed: %v", err)
+	}
+	if total != 3 || len(items) != 3 {
+		t.Fatalf("csv duplicate batch list want total=3 len=3 got total=%d len=%d", total, len(items))
+	}
+	repeated := 0
+	for _, item := range items {
+		if item.Secret == "CSV-DUP-001" {
+			repeated++
+		}
+	}
+	if repeated != 2 {
+		t.Fatalf("expected csv repeated secret to be stored twice, got %d", repeated)
 	}
 }
 

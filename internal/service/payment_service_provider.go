@@ -10,6 +10,7 @@ import (
 	"github.com/dujiao-next/internal/constants"
 	"github.com/dujiao-next/internal/models"
 	"github.com/dujiao-next/internal/payment/alipay"
+	"github.com/dujiao-next/internal/payment/bepusdt"
 	"github.com/dujiao-next/internal/payment/epay"
 	"github.com/dujiao-next/internal/payment/epusdt"
 	"github.com/dujiao-next/internal/payment/okpay"
@@ -156,15 +157,64 @@ func (s *PaymentService) applyProviderPayment(input CreatePaymentInput, order *m
 			return ErrPaymentUpdateFailed
 		}
 		return nil
-	case constants.PaymentProviderEpusdt:
-		cfg, err := epusdt.ParseConfig(channel.ConfigJSON)
+	case constants.PaymentProviderBepusdt:
+		cfg, err := bepusdt.ParseConfig(channel.ConfigJSON)
 		if err != nil {
 			return fmt.Errorf("%w: %v", ErrPaymentChannelConfigInvalid, err)
 		}
 		// 如果配置中没有指定 trade_type，根据 channel_type 自动设置
 		if strings.TrimSpace(cfg.TradeType) == "" {
-			cfg.TradeType = epusdt.ResolveTradeType(channel.ChannelType)
+			cfg.TradeType = bepusdt.ResolveTradeType(channel.ChannelType)
 		}
+		if err := bepusdt.ValidateConfig(cfg); err != nil {
+			return fmt.Errorf("%w: %v", ErrPaymentChannelConfigInvalid, err)
+		}
+		notifyURL := strings.TrimSpace(cfg.NotifyURL)
+		returnURL := strings.TrimSpace(cfg.ReturnURL)
+		if notifyURL == "" || returnURL == "" {
+			return fmt.Errorf("%w: notify_url/return_url is required", ErrPaymentChannelConfigInvalid)
+		}
+		// 标记为 epusdt_return（历史名）；新 epusdt provider 也用同一个标记区分回跳来源即可
+		returnURL = appendURLQuery(returnURL, buildPaymentReturnQuery(input, order, "epusdt_return", ""))
+		subject := buildOrderSubject(order)
+		result, err := bepusdt.CreatePayment(gatewayCtx, cfg, bepusdt.CreateInput{
+			OrderNo:   providerOrderNo,
+			Amount:    payment.Amount.String(),
+			Name:      subject,
+			NotifyURL: notifyURL,
+			ReturnURL: returnURL,
+		})
+		if err != nil {
+			switch {
+			case errors.Is(err, bepusdt.ErrConfigInvalid):
+				return fmt.Errorf("%w: %v", ErrPaymentChannelConfigInvalid, err)
+			case errors.Is(err, bepusdt.ErrRequestFailed):
+				return ErrPaymentGatewayRequestFailed
+			case errors.Is(err, bepusdt.ErrResponseInvalid):
+				return ErrPaymentGatewayResponseInvalid
+			default:
+				return ErrPaymentGatewayRequestFailed
+			}
+		}
+		payment.PayURL = result.PaymentURL
+		payment.QRCode = result.PaymentURL
+		if result.TradeID != "" {
+			payment.ProviderRef = result.TradeID
+		}
+		if result.Raw != nil {
+			payment.ProviderPayload = models.JSON(result.Raw)
+		}
+		payment.UpdatedAt = time.Now()
+		if err := s.paymentRepo.Update(payment); err != nil {
+			return ErrPaymentUpdateFailed
+		}
+		return nil
+	case constants.PaymentProviderEpusdt:
+		cfg, err := epusdt.ParseConfig(channel.ConfigJSON)
+		if err != nil {
+			return fmt.Errorf("%w: %v", ErrPaymentChannelConfigInvalid, err)
+		}
+		cfg.Normalize()
 		if err := epusdt.ValidateConfig(cfg); err != nil {
 			return fmt.Errorf("%w: %v", ErrPaymentChannelConfigInvalid, err)
 		}
@@ -175,6 +225,7 @@ func (s *PaymentService) applyProviderPayment(input CreatePaymentInput, order *m
 		}
 		returnURL = appendURLQuery(returnURL, buildPaymentReturnQuery(input, order, "epusdt_return", ""))
 		subject := buildOrderSubject(order)
+
 		result, err := epusdt.CreatePayment(gatewayCtx, cfg, epusdt.CreateInput{
 			OrderNo:   providerOrderNo,
 			Amount:    payment.Amount.String(),
@@ -581,18 +632,31 @@ func (s *PaymentService) ValidateChannel(channel *models.PaymentChannel) error {
 			return fmt.Errorf("%w: %v", ErrPaymentChannelConfigInvalid, err)
 		}
 		return nil
-	case constants.PaymentProviderEpusdt:
-		if !epusdt.IsSupportedChannelType(channel.ChannelType) {
+	case constants.PaymentProviderBepusdt:
+		if !bepusdt.IsSupportedChannelType(channel.ChannelType) {
 			return fmt.Errorf("%w: unsupported channel_type %s", ErrPaymentChannelConfigInvalid, channel.ChannelType)
 		}
 		if strings.ToLower(strings.TrimSpace(channel.InteractionMode)) != constants.PaymentInteractionRedirect &&
 			strings.ToLower(strings.TrimSpace(channel.InteractionMode)) != constants.PaymentInteractionQR {
 			return ErrPaymentChannelConfigInvalid
 		}
+		cfg, err := bepusdt.ParseConfig(channel.ConfigJSON)
+		if err != nil {
+			return fmt.Errorf("%w: %v", ErrPaymentChannelConfigInvalid, err)
+		}
+		if err := bepusdt.ValidateConfig(cfg); err != nil {
+			return fmt.Errorf("%w: %v", ErrPaymentChannelConfigInvalid, err)
+		}
+		return nil
+	case constants.PaymentProviderEpusdt:
+		if strings.ToLower(strings.TrimSpace(channel.InteractionMode)) != constants.PaymentInteractionRedirect {
+			return ErrPaymentChannelConfigInvalid
+		}
 		cfg, err := epusdt.ParseConfig(channel.ConfigJSON)
 		if err != nil {
 			return fmt.Errorf("%w: %v", ErrPaymentChannelConfigInvalid, err)
 		}
+		cfg.Normalize()
 		if err := epusdt.ValidateConfig(cfg); err != nil {
 			return fmt.Errorf("%w: %v", ErrPaymentChannelConfigInvalid, err)
 		}

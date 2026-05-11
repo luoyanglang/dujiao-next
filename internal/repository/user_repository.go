@@ -21,6 +21,12 @@ type UserRepository interface {
 	List(filter UserListFilter) ([]models.User, int64, error)
 	BatchUpdateStatus(userIDs []uint, status string) error
 	AssignDefaultMemberLevel(defaultLevelID uint) (int64, error)
+
+	// TOTP 相关
+	UpdateTOTPPending(userID uint, encSecret string, expiresAt time.Time) error
+	UpdateTOTPEnabled(userID uint, encSecret string, enabledAt time.Time, recoveryCodesJSON string) error
+	UpdateRecoveryCodes(userID uint, recoveryCodesJSON string) error
+	ClearTOTP(userID uint) error
 }
 
 // GormUserRepository GORM 实现
@@ -157,4 +163,57 @@ func (r *GormUserRepository) AssignDefaultMemberLevel(defaultLevelID uint) (int6
 			"updated_at":      time.Now(),
 		})
 	return result.RowsAffected, result.Error
+}
+
+// UpdateTOTPPending 写入待绑定 secret 与过期时间
+func (r *GormUserRepository) UpdateTOTPPending(userID uint, encSecret string, expiresAt time.Time) error {
+	if userID == 0 {
+		return errors.New("invalid user id")
+	}
+	return r.db.Model(&models.User{}).Where("id = ?", userID).Updates(map[string]interface{}{
+		"totp_pending_secret":     encSecret,
+		"totp_pending_expires_at": expiresAt,
+	}).Error
+}
+
+// UpdateTOTPEnabled 完成绑定：迁移 pending → 正式 secret，写入恢复码，清空 pending；
+// 同时 TokenVersion++ 强制其他设备的旧 session 失效（提升安全级别等同于改密码）。
+func (r *GormUserRepository) UpdateTOTPEnabled(userID uint, encSecret string, enabledAt time.Time, recoveryCodesJSON string) error {
+	if userID == 0 {
+		return errors.New("invalid user id")
+	}
+	return r.db.Model(&models.User{}).Where("id = ?", userID).Updates(map[string]interface{}{
+		"totp_secret":             encSecret,
+		"totp_enabled_at":         enabledAt,
+		"totp_pending_secret":     "",
+		"totp_pending_expires_at": nil,
+		"recovery_codes":          recoveryCodesJSON,
+		"token_version":           gorm.Expr("token_version + 1"),
+		"token_invalid_before":    enabledAt,
+	}).Error
+}
+
+// UpdateRecoveryCodes 替换恢复码 JSON
+func (r *GormUserRepository) UpdateRecoveryCodes(userID uint, recoveryCodesJSON string) error {
+	if userID == 0 {
+		return errors.New("invalid user id")
+	}
+	return r.db.Model(&models.User{}).Where("id = ?", userID).Update("recovery_codes", recoveryCodesJSON).Error
+}
+
+// ClearTOTP 清空所有 TOTP 字段，TokenVersion++ 强制下线
+func (r *GormUserRepository) ClearTOTP(userID uint) error {
+	if userID == 0 {
+		return errors.New("invalid user id")
+	}
+	now := time.Now()
+	return r.db.Model(&models.User{}).Where("id = ?", userID).Updates(map[string]interface{}{
+		"totp_secret":             "",
+		"totp_enabled_at":         nil,
+		"totp_pending_secret":     "",
+		"totp_pending_expires_at": nil,
+		"recovery_codes":          "",
+		"token_version":           gorm.Expr("token_version + 1"),
+		"token_invalid_before":    now,
+	}).Error
 }

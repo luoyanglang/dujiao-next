@@ -43,6 +43,7 @@ const (
 	PaymentProviderOfficial = "official"
 	PaymentProviderEpay     = "epay"
 	PaymentProviderEpusdt   = "epusdt"
+	PaymentProviderBepusdt  = "bepusdt"
 	PaymentProviderOkpay    = "okpay"
 	PaymentProviderTokenpay = "tokenpay"
 	PaymentProviderWallet   = "wallet"
@@ -158,9 +159,15 @@ const (
 	AlipayCallbackFail            = "fail"
 )
 
-// EPUSDT 回调常量
+// BEpusdt 回调常量
 const (
-	EpusdtCallbackSuccess = "success"
+	BepusdtCallbackSuccess = "success"
+	BepusdtCallbackFail    = "fail"
+)
+
+// epusdt（GMPay）回调常量
+const (
+	EpusdtCallbackSuccess = "ok"
 	EpusdtCallbackFail    = "fail"
 )
 
@@ -252,6 +259,12 @@ const (
 	LoginLogFailReasonTelegramReplayed     = "telegram_replayed"
 	LoginLogFailReasonTelegramConfig       = "telegram_config_invalid"
 	LoginLogFailReasonInternalError        = "internal_error"
+	LoginLogFailReasonInvalidTOTPCode      = "invalid_totp_code"
+	LoginLogFailReasonInvalidRecoveryCode  = "invalid_recovery_code"
+	LoginLogFailReasonChallengeInvalid     = "challenge_invalid"
+	LoginLogFailReasonTooManyAttempts      = "too_many_attempts"
+	// LoginLogPasswordOK2FAPending 第一步密码通过，等待 TOTP 验证
+	LoginLogPasswordOK2FAPending = "password_ok_2fa_pending"
 )
 
 // 登录日志来源常量

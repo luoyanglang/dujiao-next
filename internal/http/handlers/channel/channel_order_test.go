@@ -19,16 +19,18 @@ func TestBuildChannelOrderPreviewResponseIncludesTelegramFriendlyFields(t *testi
 		PromotionDiscountAmount: models.NewMoneyFromDecimal(decimal.RequireFromString("10.00")),
 		TotalAmount:             models.NewMoneyFromDecimal(decimal.RequireFromString("90.00")),
 		Items: []service.OrderPreviewItem{{
-			ProductID:         12,
-			SKUID:             34,
-			TitleJSON:         models.JSON{"zh-CN": "会员订阅"},
-			SKUSnapshotJSON:   models.JSON{"spec_values": models.JSON{"zh-CN": "季度版"}},
-			Quantity:          2,
-			UnitPrice:         models.NewMoneyFromDecimal(decimal.RequireFromString("54.00")),
-			TotalPrice:        models.NewMoneyFromDecimal(decimal.RequireFromString("108.00")),
-			CouponDiscount:    models.NewMoneyFromDecimal(decimal.RequireFromString("8.00")),
-			PromotionDiscount: models.NewMoneyFromDecimal(decimal.RequireFromString("10.00")),
-			FulfillmentType:   "manual",
+			ProductID:          12,
+			SKUID:              34,
+			TitleJSON:          models.JSON{"zh-CN": "会员订阅"},
+			SKUSnapshotJSON:    models.JSON{"spec_values": models.JSON{"zh-CN": "季度版"}},
+			Quantity:           2,
+			OriginalUnitPrice:  models.NewMoneyFromDecimal(decimal.RequireFromString("60.00")),
+			UnitPrice:          models.NewMoneyFromDecimal(decimal.RequireFromString("54.00")),
+			OriginalTotalPrice: models.NewMoneyFromDecimal(decimal.RequireFromString("120.00")),
+			TotalPrice:         models.NewMoneyFromDecimal(decimal.RequireFromString("108.00")),
+			CouponDiscount:     models.NewMoneyFromDecimal(decimal.RequireFromString("8.00")),
+			PromotionDiscount:  models.NewMoneyFromDecimal(decimal.RequireFromString("10.00")),
+			FulfillmentType:    "manual",
 		}},
 	}, "zh-CN")
 
@@ -44,6 +46,12 @@ func TestBuildChannelOrderPreviewResponseIncludesTelegramFriendlyFields(t *testi
 	}
 	if got := items[0]["coupon_discount"]; got != "8.00" {
 		t.Fatalf("expected coupon_discount=8.00, got=%v", got)
+	}
+	if got := items[0]["original_unit_price"]; got != "60.00" {
+		t.Fatalf("expected original_unit_price=60.00, got=%v", got)
+	}
+	if got := items[0]["original_total_price"]; got != "120.00" {
+		t.Fatalf("expected original_total_price=120.00, got=%v", got)
 	}
 	if got := items[0]["promotion_discount"]; got != "10.00" {
 		t.Fatalf("expected promotion_discount=10.00, got=%v", got)
@@ -72,16 +80,18 @@ func TestBuildChannelOrderDetailResponseUsesTotalPaidAmount(t *testing.T) {
 		UpdatedAt:               now,
 		PaidAt:                  &now,
 		Items: []models.OrderItem{{
-			ProductID:         1,
-			SKUID:             2,
-			TitleJSON:         models.JSON{"zh-CN": "测试商品"},
-			SKUSnapshotJSON:   models.JSON{"spec_values": models.JSON{"zh-CN": "标准版"}},
-			Quantity:          1,
-			UnitPrice:         models.NewMoneyFromDecimal(decimal.RequireFromString("80.00")),
-			TotalPrice:        models.NewMoneyFromDecimal(decimal.RequireFromString("80.00")),
-			CouponDiscount:    models.NewMoneyFromDecimal(decimal.RequireFromString("5.00")),
-			PromotionDiscount: models.NewMoneyFromDecimal(decimal.RequireFromString("15.00")),
-			FulfillmentType:   "manual",
+			ProductID:          1,
+			SKUID:              2,
+			TitleJSON:          models.JSON{"zh-CN": "测试商品"},
+			SKUSnapshotJSON:    models.JSON{"spec_values": models.JSON{"zh-CN": "标准版"}},
+			Quantity:           1,
+			OriginalUnitPrice:  models.NewMoneyFromDecimal(decimal.RequireFromString("100.00")),
+			UnitPrice:          models.NewMoneyFromDecimal(decimal.RequireFromString("80.00")),
+			OriginalTotalPrice: models.NewMoneyFromDecimal(decimal.RequireFromString("100.00")),
+			TotalPrice:         models.NewMoneyFromDecimal(decimal.RequireFromString("80.00")),
+			CouponDiscount:     models.NewMoneyFromDecimal(decimal.RequireFromString("5.00")),
+			PromotionDiscount:  models.NewMoneyFromDecimal(decimal.RequireFromString("15.00")),
+			FulfillmentType:    "manual",
 		}},
 		Children: []models.Order{{
 			ID:      8,
@@ -117,6 +127,12 @@ func TestBuildChannelOrderDetailResponseUsesTotalPaidAmount(t *testing.T) {
 	}
 	if got := items[0]["coupon_discount"]; got != "5.00" {
 		t.Fatalf("expected coupon_discount=5.00, got=%v", got)
+	}
+	if got := items[0]["original_unit_price"]; got != "100.00" {
+		t.Fatalf("expected original_unit_price=100.00, got=%v", got)
+	}
+	if got := items[0]["original_total_price"]; got != "100.00" {
+		t.Fatalf("expected original_total_price=100.00, got=%v", got)
 	}
 	if got := items[0]["promotion_discount"]; got != "15.00" {
 		t.Fatalf("expected promotion_discount=15.00, got=%v", got)

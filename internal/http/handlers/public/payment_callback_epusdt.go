@@ -17,7 +17,9 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// HandleEpusdtCallback 处理 BEpusdt 回调
+// HandleEpusdtCallback 处理真 epusdt（GMPay）回调。
+// 特征：JSON body 必须同时含 pid + trade_id + order_id（pid 是与 BEpusdt 的强区分）。
+// 不匹配特征则返回 false 让链向后传给 BEpusdt handler。
 func (h *Handler) HandleEpusdtCallback(c *gin.Context) bool {
 	log := shared.RequestLog(c)
 
@@ -26,7 +28,7 @@ func (h *Handler) HandleEpusdtCallback(c *gin.Context) bool {
 	if err != nil {
 		return false
 	}
-	// 恢复请求体供后续使用
+	// 恢复请求体供后续 handler 重读
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(body))
 
 	// 尝试解析为 epusdt 回调格式
@@ -36,20 +38,24 @@ func (h *Handler) HandleEpusdtCallback(c *gin.Context) bool {
 		return false
 	}
 
-	// 检查是否有 trade_id 和 order_id（epusdt 回调特征）
-	if data.TradeID == "" || data.OrderID == "" {
-		log.Debugw("epusdt_callback_missing_fields", "trade_id", data.TradeID, "order_id", data.OrderID)
+	// 强特征：必须同时有 pid + trade_id + order_id
+	if strings.TrimSpace(data.PID) == "" || data.TradeID == "" || data.OrderID == "" {
+		log.Debugw("epusdt_callback_feature_missing",
+			"has_pid", strings.TrimSpace(data.PID) != "",
+			"has_trade_id", data.TradeID != "",
+			"has_order_id", data.OrderID != "")
 		return false
 	}
 
 	log.Infow("epusdt_callback_received",
+		"pid", data.PID,
 		"trade_id", data.TradeID,
 		"order_id", data.OrderID,
 		"status", data.Status,
 		"raw_body", callbackRawBodyForLog(body),
 	)
 
-	// 通过 order_id（我方网关订单号）查找支付记录，降级到 trade_id（第三方流水号）
+	// 通过 order_id（我方网关订单号）查 payment，降级到 trade_id（第三方流水号）
 	payment, err := h.PaymentRepo.GetByGatewayOrderNo(data.OrderID)
 	if err != nil || payment == nil {
 		payment, err = h.PaymentRepo.GetLatestByProviderRef(data.TradeID)
@@ -84,6 +90,7 @@ func (h *Handler) HandleEpusdtCallback(c *gin.Context) bool {
 		c.String(200, constants.EpusdtCallbackFail)
 		return true
 	}
+	cfg.Normalize()
 
 	// 验证签名
 	if err := epusdt.VerifyCallback(cfg, data); err != nil {
@@ -130,6 +137,6 @@ func (h *Handler) HandleEpusdtCallback(c *gin.Context) bool {
 	}
 
 	log.Infow("epusdt_callback_processed", "payment_id", payment.ID, "status", status)
-	c.String(200, constants.EpusdtCallbackSuccess)
+	c.String(200, constants.EpusdtCallbackSuccess) // "ok"
 	return true
 }

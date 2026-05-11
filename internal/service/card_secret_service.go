@@ -39,13 +39,14 @@ func NewCardSecretService(secretRepo repository.CardSecretRepository, batchRepo 
 
 // CreateCardSecretBatchInput 批量录入卡密输入
 type CreateCardSecretBatchInput struct {
-	ProductID uint
-	SKUID     uint
-	Secrets   []string
-	BatchNo   string
-	Note      string
-	Source    string
-	AdminID   uint
+	ProductID   uint
+	SKUID       uint
+	Secrets     []string
+	BatchNo     string
+	Note        string
+	Source      string
+	AdminID     uint
+	Deduplicate *bool
 }
 
 // CreateCardSecretBatch 批量录入卡密
@@ -69,7 +70,7 @@ func (s *CardSecretService) CreateCardSecretBatch(input CreateCardSecretBatchInp
 		return nil, 0, err
 	}
 
-	normalized := normalizeSecrets(input.Secrets)
+	normalized := normalizeSecrets(input.Secrets, shouldDeduplicateCardSecrets(input.Deduplicate))
 	if len(normalized) == 0 {
 		return nil, 0, ErrCardSecretInvalid
 	}
@@ -135,12 +136,13 @@ func (s *CardSecretService) CreateCardSecretBatch(input CreateCardSecretBatchInp
 
 // ImportCardSecretCSVInput 导入 CSV 输入
 type ImportCardSecretCSVInput struct {
-	ProductID uint
-	SKUID     uint
-	File      *multipart.FileHeader
-	BatchNo   string
-	Note      string
-	AdminID   uint
+	ProductID   uint
+	SKUID       uint
+	File        *multipart.FileHeader
+	BatchNo     string
+	Note        string
+	AdminID     uint
+	Deduplicate *bool
 }
 
 // ImportCardSecretCSV 从 CSV 导入卡密
@@ -160,13 +162,14 @@ func (s *CardSecretService) ImportCardSecretCSV(input ImportCardSecretCSVInput) 
 		return nil, 0, ErrCardSecretImportFailed
 	}
 	return s.CreateCardSecretBatch(CreateCardSecretBatchInput{
-		ProductID: input.ProductID,
-		SKUID:     input.SKUID,
-		Secrets:   secrets,
-		BatchNo:   input.BatchNo,
-		Note:      input.Note,
-		Source:    constants.CardSecretSourceCSV,
-		AdminID:   input.AdminID,
+		ProductID:   input.ProductID,
+		SKUID:       input.SKUID,
+		Secrets:     secrets,
+		BatchNo:     input.BatchNo,
+		Note:        input.Note,
+		Source:      constants.CardSecretSourceCSV,
+		AdminID:     input.AdminID,
+		Deduplicate: input.Deduplicate,
 	})
 }
 
@@ -572,19 +575,31 @@ func (s *CardSecretService) resolveCardSecretSKU(productID, rawSKUID uint) (*mod
 	return nil, ErrProductSKURequired
 }
 
-func normalizeSecrets(values []string) []string {
-	seen := make(map[string]struct{})
-	var result []string
+func shouldDeduplicateCardSecrets(value *bool) bool {
+	if value == nil {
+		return true
+	}
+	return *value
+}
+
+func normalizeSecrets(values []string, deduplicate bool) []string {
+	var seen map[string]struct{}
+	if deduplicate {
+		seen = make(map[string]struct{})
+	}
+	result := make([]string, 0, len(values))
 	for _, val := range values {
 		for _, line := range strings.Split(val, "\n") {
 			trimmed := strings.TrimSpace(line)
 			if trimmed == "" {
 				continue
 			}
-			if _, ok := seen[trimmed]; ok {
-				continue
+			if deduplicate {
+				if _, ok := seen[trimmed]; ok {
+					continue
+				}
+				seen[trimmed] = struct{}{}
 			}
-			seen[trimmed] = struct{}{}
 			result = append(result, trimmed)
 		}
 	}
@@ -633,7 +648,7 @@ func parseCSVSecrets(reader io.Reader) ([]string, error) {
 		}
 		secrets = append(secrets, secret)
 	}
-	return normalizeSecrets(secrets), nil
+	return secrets, nil
 }
 
 func generateBatchNo() string {

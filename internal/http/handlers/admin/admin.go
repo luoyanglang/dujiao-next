@@ -19,13 +19,6 @@ type LoginRequest struct {
 	CaptchaPayload shared.CaptchaPayloadRequest `json:"captcha_payload"`
 }
 
-// LoginResponse 登录响应
-type LoginResponse struct {
-	Token     string                 `json:"token"`
-	User      map[string]interface{} `json:"user"`
-	ExpiresAt string                 `json:"expires_at"`
-}
-
 // AdminLogin 管理员登录
 func (h *Handler) AdminLogin(c *gin.Context) {
 	var req LoginRequest
@@ -53,8 +46,13 @@ func (h *Handler) AdminLogin(c *gin.Context) {
 		}
 	}
 
-	admin, token, expiresAt, err := h.AuthService.Login(req.Username, req.Password)
+	loginRes, err := h.AuthService.Login(req.Username, req.Password)
 	if err != nil {
+		failReason := constants.AdminLoginFailInvalidCredentials
+		if !errors.Is(err, service.ErrInvalidCredentials) {
+			failReason = constants.AdminLoginFailInternal
+		}
+		h.writeAdminLoginLog(c, 0, req.Username, constants.AdminLoginEventLoginPassword, constants.AdminLoginStatusFailed, failReason, nil)
 		if errors.Is(err, service.ErrInvalidCredentials) {
 			shared.RespondError(c, response.CodeUnauthorized, "error.admin_login_invalid", nil)
 			return
@@ -62,13 +60,26 @@ func (h *Handler) AdminLogin(c *gin.Context) {
 		shared.RespondError(c, response.CodeInternal, "error.login_failed", err)
 		return
 	}
-	response.Success(c, LoginResponse{
-		Token: token,
-		User: map[string]interface{}{
-			"id":       admin.ID,
-			"username": admin.Username,
+
+	if loginRes.RequiresTOTP {
+		h.writeAdminLoginLog(c, loginRes.Admin.ID, loginRes.Admin.Username, constants.AdminLoginEventLoginPassword, constants.AdminLoginStatusSuccess, "", nil)
+		response.Success(c, gin.H{
+			"requires_totp":        true,
+			"challenge_token":      loginRes.ChallengeToken,
+			"challenge_expires_at": loginRes.ChallengeExpiresAt.Format("2006-01-02T15:04:05Z07:00"),
+		})
+		return
+	}
+
+	h.writeAdminLoginLog(c, loginRes.Admin.ID, loginRes.Admin.Username, constants.AdminLoginEventLoginPassword, constants.AdminLoginStatusSuccess, "", nil)
+	response.Success(c, gin.H{
+		"requires_totp": false,
+		"token":         loginRes.Token,
+		"user": gin.H{
+			"id":       loginRes.Admin.ID,
+			"username": loginRes.Admin.Username,
 		},
-		ExpiresAt: expiresAt.Format("2006-01-02T15:04:05Z07:00"),
+		"expires_at": loginRes.ExpiresAt.Format("2006-01-02T15:04:05Z07:00"),
 	})
 }
 

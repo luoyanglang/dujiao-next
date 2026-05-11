@@ -2,6 +2,7 @@ package repository
 
 import (
 	"errors"
+	"time"
 
 	"github.com/dujiao-next/internal/models"
 
@@ -17,6 +18,12 @@ type AdminRepository interface {
 	Create(admin *models.Admin) error
 	Update(admin *models.Admin) error
 	Delete(id uint) error
+
+	// TOTP 相关
+	UpdateTOTPPending(adminID uint, encSecret string, expiresAt time.Time) error
+	UpdateTOTPEnabled(adminID uint, encSecret string, enabledAt time.Time, recoveryCodesJSON string) error
+	UpdateRecoveryCodes(adminID uint, recoveryCodesJSON string) error
+	ClearTOTP(adminID uint) error
 }
 
 // GormAdminRepository GORM 实现
@@ -57,7 +64,7 @@ func (r *GormAdminRepository) GetByID(id uint) (*models.Admin, error) {
 func (r *GormAdminRepository) List() ([]models.Admin, error) {
 	admins := make([]models.Admin, 0)
 	err := r.db.
-		Select("id", "username", "is_super", "last_login_at", "created_at").
+		Select("id", "username", "is_super", "last_login_at", "totp_enabled_at", "created_at").
 		Order("id ASC").
 		Find(&admins).Error
 	if err != nil {
@@ -91,4 +98,54 @@ func (r *GormAdminRepository) Delete(id uint) error {
 		return nil
 	}
 	return r.db.Delete(&models.Admin{}, id).Error
+}
+
+// UpdateTOTPPending 写入待绑定 secret 与过期时间
+func (r *GormAdminRepository) UpdateTOTPPending(adminID uint, encSecret string, expiresAt time.Time) error {
+	if adminID == 0 {
+		return errors.New("invalid admin id")
+	}
+	return r.db.Model(&models.Admin{}).Where("id = ?", adminID).Updates(map[string]interface{}{
+		"totp_pending_secret":     encSecret,
+		"totp_pending_expires_at": expiresAt,
+	}).Error
+}
+
+// UpdateTOTPEnabled 完成绑定：迁移 pending → 正式 secret，写入恢复码，清空 pending
+func (r *GormAdminRepository) UpdateTOTPEnabled(adminID uint, encSecret string, enabledAt time.Time, recoveryCodesJSON string) error {
+	if adminID == 0 {
+		return errors.New("invalid admin id")
+	}
+	return r.db.Model(&models.Admin{}).Where("id = ?", adminID).Updates(map[string]interface{}{
+		"totp_secret":             encSecret,
+		"totp_enabled_at":         enabledAt,
+		"totp_pending_secret":     "",
+		"totp_pending_expires_at": nil,
+		"recovery_codes":          recoveryCodesJSON,
+	}).Error
+}
+
+// UpdateRecoveryCodes 替换恢复码 JSON（用于消耗一个码或重新生成）
+func (r *GormAdminRepository) UpdateRecoveryCodes(adminID uint, recoveryCodesJSON string) error {
+	if adminID == 0 {
+		return errors.New("invalid admin id")
+	}
+	return r.db.Model(&models.Admin{}).Where("id = ?", adminID).Update("recovery_codes", recoveryCodesJSON).Error
+}
+
+// ClearTOTP 清空所有 TOTP 字段，TokenVersion++ 强制下线
+func (r *GormAdminRepository) ClearTOTP(adminID uint) error {
+	if adminID == 0 {
+		return errors.New("invalid admin id")
+	}
+	now := time.Now()
+	return r.db.Model(&models.Admin{}).Where("id = ?", adminID).Updates(map[string]interface{}{
+		"totp_secret":             "",
+		"totp_enabled_at":         nil,
+		"totp_pending_secret":     "",
+		"totp_pending_expires_at": nil,
+		"recovery_codes":          "",
+		"token_version":           gorm.Expr("token_version + 1"),
+		"token_invalid_before":    now,
+	}).Error
 }

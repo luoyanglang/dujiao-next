@@ -9,6 +9,7 @@ type ProductResp struct {
 	ID                   uint               `json:"id"`
 	CategoryID           uint               `json:"category_id"`
 	Slug                 string             `json:"slug"`
+	SeoMeta              models.JSON        `json:"seo_meta"`
 	Title                models.JSON        `json:"title"`
 	Description          models.JSON        `json:"description"`
 	Content              models.JSON        `json:"content"`
@@ -16,6 +17,7 @@ type ProductResp struct {
 	Images               models.StringArray `json:"images"`
 	Tags                 models.StringArray `json:"tags"`
 	PurchaseType         string             `json:"purchase_type"`
+	MinPurchaseQuantity  int                `json:"min_purchase_quantity"`
 	MaxPurchaseQuantity  int                `json:"max_purchase_quantity"`
 	FulfillmentType      string             `json:"fulfillment_type"`
 	ManualFormSchema     models.JSON        `json:"manual_form_schema"`

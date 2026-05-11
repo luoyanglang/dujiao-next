@@ -16,11 +16,12 @@ import (
 
 // CreateCardSecretBatchRequest 批量录入卡密请求
 type CreateCardSecretBatchRequest struct {
-	ProductID uint     `json:"product_id" binding:"required"`
-	SKUID     uint     `json:"sku_id"`
-	Secrets   []string `json:"secrets" binding:"required"`
-	BatchNo   string   `json:"batch_no"`
-	Note      string   `json:"note"`
+	ProductID   uint     `json:"product_id" binding:"required"`
+	SKUID       uint     `json:"sku_id"`
+	Secrets     []string `json:"secrets" binding:"required"`
+	BatchNo     string   `json:"batch_no"`
+	Note        string   `json:"note"`
+	Deduplicate *bool    `json:"deduplicate"`
 }
 
 // UpdateCardSecretRequest 更新卡密请求
@@ -76,6 +77,18 @@ func buildCardSecretListInput(filter *CardSecretQueryRequest) service.ListCardSe
 	}
 }
 
+func parseOptionalBoolForm(value string) (*bool, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil, nil
+	}
+	parsed, err := strconv.ParseBool(trimmed)
+	if err != nil {
+		return nil, err
+	}
+	return &parsed, nil
+}
+
 // CreateCardSecretBatch 批量录入卡密
 func (h *Handler) CreateCardSecretBatch(c *gin.Context) {
 	adminID, ok := shared.GetAdminID(c)
@@ -89,13 +102,14 @@ func (h *Handler) CreateCardSecretBatch(c *gin.Context) {
 	}
 
 	batch, created, err := h.CardSecretService.CreateCardSecretBatch(service.CreateCardSecretBatchInput{
-		ProductID: req.ProductID,
-		SKUID:     req.SKUID,
-		Secrets:   req.Secrets,
-		BatchNo:   req.BatchNo,
-		Note:      req.Note,
-		Source:    constants.CardSecretSourceManual,
-		AdminID:   adminID,
+		ProductID:   req.ProductID,
+		SKUID:       req.SKUID,
+		Secrets:     req.Secrets,
+		BatchNo:     req.BatchNo,
+		Note:        req.Note,
+		Source:      constants.CardSecretSourceManual,
+		AdminID:     adminID,
+		Deduplicate: req.Deduplicate,
 	})
 	if err != nil {
 		switch {
@@ -147,14 +161,20 @@ func (h *Handler) ImportCardSecretCSV(c *gin.Context) {
 	}
 	batchNo := strings.TrimSpace(c.PostForm("batch_no"))
 	note := strings.TrimSpace(c.PostForm("note"))
+	deduplicate, err := parseOptionalBoolForm(c.PostForm("deduplicate"))
+	if err != nil {
+		shared.RespondError(c, response.CodeBadRequest, "error.card_secret_invalid", nil)
+		return
+	}
 
 	batch, created, err := h.CardSecretService.ImportCardSecretCSV(service.ImportCardSecretCSVInput{
-		ProductID: productID,
-		SKUID:     skuID,
-		File:      file,
-		BatchNo:   batchNo,
-		Note:      note,
-		AdminID:   adminID,
+		ProductID:   productID,
+		SKUID:       skuID,
+		File:        file,
+		BatchNo:     batchNo,
+		Note:        note,
+		AdminID:     adminID,
+		Deduplicate: deduplicate,
 	})
 	if err != nil {
 		switch {

@@ -1,0 +1,171 @@
+package router
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/dujiao-next/internal/models"
+	"github.com/dujiao-next/internal/repository"
+	"github.com/dujiao-next/internal/service"
+
+	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
+	"github.com/golang-jwt/jwt/v5"
+	"gorm.io/gorm"
+)
+
+const middlewareTestSecret = "user-jwt-test-secret-typ"
+
+func setupUserMiddlewareTestRepo(t *testing.T) (repository.UserRepository, *models.User) {
+	t.Helper()
+	dsn := fmt.Sprintf("file:user_middleware_typ_%d?mode=memory&cache=shared", time.Now().UnixNano())
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := db.AutoMigrate(&models.User{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	repo := repository.NewUserRepository(db)
+	now := time.Now()
+	user := &models.User{
+		Email:           "mw@example.com",
+		PasswordHash:    "x",
+		Status:          "active",
+		EmailVerifiedAt: &now,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+	if err := repo.Create(user); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	return repo, user
+}
+
+func signToken(t *testing.T, claims jwt.Claims) string {
+	t.Helper()
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signed, err := tok.SignedString([]byte(middlewareTestSecret))
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	return signed
+}
+
+// runUserMiddleware 跑一遍 UserJWTAuthMiddleware，返回业务 status_code：
+// 成功放行返回 200（handler 实际响应），失败时统一响应包内 status_code = 401。
+func runUserMiddleware(t *testing.T, repo repository.UserRepository, token string) int {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(UserJWTAuthMiddleware(middlewareTestSecret, repo))
+	r.GET("/me/ping", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/me/ping", nil)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	r.ServeHTTP(w, req)
+
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v body=%s", err, w.Body.String())
+	}
+	if okVal, hasOK := resp["ok"]; hasOK {
+		if v, ok := okVal.(bool); ok && v {
+			return 200
+		}
+	}
+	if sc, ok := resp["status_code"].(float64); ok {
+		return int(sc)
+	}
+	t.Fatalf("unexpected response body: %s", w.Body.String())
+	return -1
+}
+
+func TestUserJWTMiddlewareAcceptsAccessToken(t *testing.T) {
+	repo, user := setupUserMiddlewareTestRepo(t)
+	claims := service.UserJWTClaims{
+		UserID:       user.ID,
+		Email:        user.Email,
+		TokenVersion: user.TokenVersion,
+		Typ:          service.TokenTypAccess,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			NotBefore: jwt.NewNumericDate(time.Now()),
+		},
+	}
+	got := runUserMiddleware(t, repo, signToken(t, claims))
+	if got != 200 {
+		t.Fatalf("expected status_code=200 for access token, got %d", got)
+	}
+}
+
+func TestUserJWTMiddlewareAcceptsLegacyTokenWithoutTyp(t *testing.T) {
+	// 兼容旧 token：没有 typ 字段时仍按访问 token 放行
+	repo, user := setupUserMiddlewareTestRepo(t)
+	claims := service.UserJWTClaims{
+		UserID:       user.ID,
+		Email:        user.Email,
+		TokenVersion: user.TokenVersion,
+		// Typ 留空
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			NotBefore: jwt.NewNumericDate(time.Now()),
+		},
+	}
+	got := runUserMiddleware(t, repo, signToken(t, claims))
+	if got != 200 {
+		t.Fatalf("expected status_code=200 for legacy token, got %d", got)
+	}
+}
+
+func TestUserJWTMiddlewareRejectsChallengeToken(t *testing.T) {
+	// 关键安全测试：挑战 token 即便签名通过，也必须被中间件拒绝
+	repo, user := setupUserMiddlewareTestRepo(t)
+	claims := service.UserChallengeClaims{
+		UserID:  user.ID,
+		JTI:     "challenge-jti",
+		Purpose: service.UserChallengePurpose2FA,
+		Typ:     service.TokenTyp2FAChallenge,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			NotBefore: jwt.NewNumericDate(time.Now()),
+			ID:        "challenge-jti",
+		},
+	}
+	got := runUserMiddleware(t, repo, signToken(t, claims))
+	if got != 401 {
+		t.Fatalf("expected 401 rejecting challenge token, got %d", got)
+	}
+}
+
+func TestUserJWTMiddlewareRejectsCustomTypValue(t *testing.T) {
+	// 任何非空非 access 的 typ 一律拒绝，防御未来引入的其它 token 类型被误用
+	repo, user := setupUserMiddlewareTestRepo(t)
+	claims := service.UserJWTClaims{
+		UserID:       user.ID,
+		Email:        user.Email,
+		TokenVersion: user.TokenVersion,
+		Typ:          "refresh",
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			NotBefore: jwt.NewNumericDate(time.Now()),
+		},
+	}
+	got := runUserMiddleware(t, repo, signToken(t, claims))
+	if got != 401 {
+		t.Fatalf("expected 401 for unknown typ, got %d", got)
+	}
+}

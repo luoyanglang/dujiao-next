@@ -222,7 +222,7 @@ func (h *Handler) UserLogin(c *gin.Context) {
 		}
 	}
 
-	user, token, expiresAt, err := h.UserAuthService.LoginWithRememberMe(req.Email, req.Password, req.RememberMe)
+	res, err := h.UserAuthService.LoginStep1(req.Email, req.Password, req.RememberMe)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrInvalidEmail):
@@ -244,11 +244,22 @@ func (h *Handler) UserLogin(c *gin.Context) {
 		return
 	}
 
-	h.recordUserLogin(c, user.Email, user.ID, constants.LoginLogStatusSuccess, "", constants.LoginLogSourceWeb)
+	if res.RequiresTOTP {
+		h.recordUserLogin(c, res.User.Email, res.User.ID, constants.LoginLogStatusSuccess, constants.LoginLogPasswordOK2FAPending, constants.LoginLogSourceWeb)
+		response.Success(c, gin.H{
+			"requires_totp":        true,
+			"challenge_token":      res.ChallengeToken,
+			"challenge_expires_at": res.ChallengeExpiresAt.Format("2006-01-02T15:04:05Z07:00"),
+		})
+		return
+	}
+
+	h.recordUserLogin(c, res.User.Email, res.User.ID, constants.LoginLogStatusSuccess, "", constants.LoginLogSourceWeb)
 	response.Success(c, gin.H{
-		"user":       dto.NewUserAuthBriefResp(user),
-		"token":      token,
-		"expires_at": expiresAt.Format("2006-01-02T15:04:05Z07:00"),
+		"requires_totp": false,
+		"user":          dto.NewUserAuthBriefResp(res.User),
+		"token":         res.Token,
+		"expires_at":    res.ExpiresAt.Format("2006-01-02T15:04:05Z07:00"),
 	})
 }
 
@@ -296,7 +307,7 @@ func (h *Handler) UserTelegramLogin(c *gin.Context) {
 		return
 	}
 
-	user, token, expiresAt, err := h.UserAuthService.LoginWithTelegram(service.LoginWithTelegramInput{
+	res, err := h.UserAuthService.LoginWithTelegram(service.LoginWithTelegramInput{
 		Payload: service.TelegramLoginPayload{
 			ID:        req.ID,
 			FirstName: req.FirstName,
@@ -341,11 +352,22 @@ func (h *Handler) UserTelegramLogin(c *gin.Context) {
 		return
 	}
 
-	h.recordUserLogin(c, user.Email, user.ID, constants.LoginLogStatusSuccess, "", constants.LoginLogSourceTelegram)
+	if res.RequiresTOTP {
+		h.recordUserLogin(c, res.User.Email, res.User.ID, constants.LoginLogStatusSuccess, constants.LoginLogPasswordOK2FAPending, constants.LoginLogSourceTelegram)
+		response.Success(c, gin.H{
+			"requires_totp":        true,
+			"challenge_token":      res.ChallengeToken,
+			"challenge_expires_at": res.ChallengeExpiresAt.Format("2006-01-02T15:04:05Z07:00"),
+		})
+		return
+	}
+
+	h.recordUserLogin(c, res.User.Email, res.User.ID, constants.LoginLogStatusSuccess, "", constants.LoginLogSourceTelegram)
 	response.Success(c, gin.H{
-		"user":       dto.NewUserAuthBriefResp(user),
-		"token":      token,
-		"expires_at": expiresAt.Format("2006-01-02T15:04:05Z07:00"),
+		"requires_totp": false,
+		"user":          dto.NewUserAuthBriefResp(res.User),
+		"token":         res.Token,
+		"expires_at":    res.ExpiresAt.Format("2006-01-02T15:04:05Z07:00"),
 	})
 }
 
@@ -358,7 +380,7 @@ func (h *Handler) UserTelegramMiniAppLogin(c *gin.Context) {
 		return
 	}
 
-	user, token, expiresAt, err := h.UserAuthService.LoginWithTelegramMiniApp(service.LoginWithTelegramMiniAppInput{
+	res, err := h.UserAuthService.LoginWithTelegramMiniApp(service.LoginWithTelegramMiniAppInput{
 		InitData: req.initData(),
 		Context:  c.Request.Context(),
 	})
@@ -395,11 +417,22 @@ func (h *Handler) UserTelegramMiniAppLogin(c *gin.Context) {
 		return
 	}
 
-	h.recordUserLogin(c, user.Email, user.ID, constants.LoginLogStatusSuccess, "", constants.LoginLogSourceTelegram)
+	if res.RequiresTOTP {
+		h.recordUserLogin(c, res.User.Email, res.User.ID, constants.LoginLogStatusSuccess, constants.LoginLogPasswordOK2FAPending, constants.LoginLogSourceTelegram)
+		response.Success(c, gin.H{
+			"requires_totp":        true,
+			"challenge_token":      res.ChallengeToken,
+			"challenge_expires_at": res.ChallengeExpiresAt.Format("2006-01-02T15:04:05Z07:00"),
+		})
+		return
+	}
+
+	h.recordUserLogin(c, res.User.Email, res.User.ID, constants.LoginLogStatusSuccess, "", constants.LoginLogSourceTelegram)
 	response.Success(c, gin.H{
-		"user":       dto.NewUserAuthBriefResp(user),
-		"token":      token,
-		"expires_at": expiresAt.Format("2006-01-02T15:04:05Z07:00"),
+		"requires_totp": false,
+		"user":          dto.NewUserAuthBriefResp(res.User),
+		"token":         res.Token,
+		"expires_at":    res.ExpiresAt.Format("2006-01-02T15:04:05Z07:00"),
 	})
 }
 

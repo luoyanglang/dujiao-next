@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"testing"
@@ -382,8 +383,17 @@ func TestProductServiceCreateRejectsParentCategoryWithChildren(t *testing.T) {
 func TestProductServiceListPublicSortOrderDescending(t *testing.T) {
 	svc, db := newProductServiceForTest(t)
 
+	category := models.Category{
+		Slug:     "sort-test",
+		NameJSON: models.JSON{"zh-CN": "sort-test"},
+		IsActive: true,
+	}
+	if err := db.Create(&category).Error; err != nil {
+		t.Fatalf("create category failed: %v", err)
+	}
+
 	high := models.Product{
-		CategoryID:  1,
+		CategoryID:  category.ID,
 		Slug:        "high-sort-product",
 		TitleJSON:   models.JSON{"zh-CN": "high"},
 		PriceAmount: models.NewMoneyFromDecimal(decimal.NewFromInt(10)),
@@ -391,7 +401,7 @@ func TestProductServiceListPublicSortOrderDescending(t *testing.T) {
 		SortOrder:   100,
 	}
 	low := models.Product{
-		CategoryID:  1,
+		CategoryID:  category.ID,
 		Slug:        "low-sort-product",
 		TitleJSON:   models.JSON{"zh-CN": "low"},
 		PriceAmount: models.NewMoneyFromDecimal(decimal.NewFromInt(10)),
@@ -423,8 +433,17 @@ func TestProductServiceListPublicSortOrderDescending(t *testing.T) {
 func TestProductServiceListPublicSortsSKUsDescending(t *testing.T) {
 	svc, db := newProductServiceForTest(t)
 
+	category := models.Category{
+		Slug:     "sku-sort-test",
+		NameJSON: models.JSON{"zh-CN": "sku-sort-test"},
+		IsActive: true,
+	}
+	if err := db.Create(&category).Error; err != nil {
+		t.Fatalf("create category failed: %v", err)
+	}
+
 	product := models.Product{
-		CategoryID:  1,
+		CategoryID:  category.ID,
 		Slug:        "sku-order-product",
 		TitleJSON:   models.JSON{"zh-CN": "sku-order-product"},
 		PriceAmount: models.NewMoneyFromDecimal(decimal.NewFromInt(10)),
@@ -834,5 +853,71 @@ func TestProductServiceDeleteCascade(t *testing.T) {
 	db.Model(&models.Product{}).Where("id = ?", product.ID).Count(&productCount)
 	if productCount != 0 {
 		t.Errorf("expected product to be soft-deleted, but still found %d", productCount)
+	}
+}
+
+func TestProductServiceCreateRejectsInvalidPurchaseLimits(t *testing.T) {
+	svc, db := newProductServiceForTest(t)
+
+	cat := models.Category{Slug: "test-purchase-limit", NameJSON: models.JSON{"zh-CN": "test"}}
+	if err := db.Create(&cat).Error; err != nil {
+		t.Fatalf("create category: %v", err)
+	}
+
+	intPtr := func(v int) *int { return &v }
+
+	_, err := svc.Create(CreateProductInput{
+		CategoryID:          cat.ID,
+		Slug:                "invalid-limit-product",
+		TitleJSON:           map[string]interface{}{"zh-CN": "invalid-limit-product"},
+		PriceAmount:         decimal.NewFromInt(10),
+		PurchaseType:        constants.ProductPurchaseMember,
+		FulfillmentType:     constants.FulfillmentTypeManual,
+		ManualStockTotal:    intPtr(1),
+		MinPurchaseQuantity: intPtr(10),
+		MaxPurchaseQuantity: intPtr(5),
+	})
+	if !errors.Is(err, ErrProductPurchaseLimitInvalid) {
+		t.Fatalf("expected ErrProductPurchaseLimitInvalid, got %v", err)
+	}
+}
+
+func TestProductServiceUpdateRejectsInvalidPurchaseLimits(t *testing.T) {
+	svc, db := newProductServiceForTest(t)
+
+	cat := models.Category{Slug: "test-purchase-limit-update", NameJSON: models.JSON{"zh-CN": "test"}}
+	if err := db.Create(&cat).Error; err != nil {
+		t.Fatalf("create category: %v", err)
+	}
+
+	intPtr := func(v int) *int { return &v }
+
+	created, err := svc.Create(CreateProductInput{
+		CategoryID:          cat.ID,
+		Slug:                "valid-limit-product",
+		TitleJSON:           map[string]interface{}{"zh-CN": "valid"},
+		PriceAmount:         decimal.NewFromInt(10),
+		PurchaseType:        constants.ProductPurchaseMember,
+		FulfillmentType:     constants.FulfillmentTypeManual,
+		ManualStockTotal:    intPtr(1),
+		MinPurchaseQuantity: intPtr(2),
+		MaxPurchaseQuantity: intPtr(5),
+	})
+	if err != nil {
+		t.Fatalf("create product failed: %v", err)
+	}
+
+	_, err = svc.Update(strconv.FormatUint(uint64(created.ID), 10), CreateProductInput{
+		CategoryID:          cat.ID,
+		Slug:                "valid-limit-product",
+		TitleJSON:           map[string]interface{}{"zh-CN": "valid"},
+		PriceAmount:         decimal.NewFromInt(10),
+		PurchaseType:        constants.ProductPurchaseMember,
+		FulfillmentType:     constants.FulfillmentTypeManual,
+		ManualStockTotal:    intPtr(1),
+		MaxPurchaseQuantity: intPtr(1), // 已存在 min=2，新设 max=1 应触发校验
+	})
+	if !errors.Is(err, ErrProductPurchaseLimitInvalid) {
+		t.Fatalf("expected ErrProductPurchaseLimitInvalid on update, got %v", err)
 	}
 }

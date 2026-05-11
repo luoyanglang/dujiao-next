@@ -52,13 +52,14 @@ func TestLoginWithTelegramMiniAppCreatesUserIdentityAndToken(t *testing.T) {
 	)
 
 	initData := buildTestTelegramMiniAppInitData(t, "test-bot-token", time.Now().Unix(), `{"id":987654,"first_name":"Mini","last_name":"Buyer","username":"mini_buyer"}`)
-	user, token, expiresAt, err := svc.LoginWithTelegramMiniApp(LoginWithTelegramMiniAppInput{
+	res, err := svc.LoginWithTelegramMiniApp(LoginWithTelegramMiniAppInput{
 		InitData: initData,
 		Context:  context.Background(),
 	})
 	if err != nil {
 		t.Fatalf("LoginWithTelegramMiniApp returned error: %v", err)
 	}
+	user := res.User
 	if user == nil {
 		t.Fatalf("expected user")
 	}
@@ -68,14 +69,14 @@ func TestLoginWithTelegramMiniAppCreatesUserIdentityAndToken(t *testing.T) {
 	if user.Status != constants.UserStatusActive {
 		t.Fatalf("user status want active got %s", user.Status)
 	}
-	if token == "" {
+	if res.Token == "" {
 		t.Fatalf("expected token")
 	}
-	if expiresAt.Before(time.Now()) {
+	if res.ExpiresAt.Before(time.Now()) {
 		t.Fatalf("expected expiresAt in future")
 	}
 
-	claims, err := svc.ParseUserJWT(token)
+	claims, err := svc.ParseUserJWT(res.Token)
 	if err != nil {
 		t.Fatalf("ParseUserJWT returned error: %v", err)
 	}

@@ -19,7 +19,7 @@ func (h *Handler) GetCategories(c *gin.Context) {
 	locale := c.DefaultQuery("locale", "zh-CN")
 	defaultLocale := "zh-CN"
 
-	categories, err := h.CategoryService.List()
+	categories, err := h.CategoryService.ListActive()
 	if err != nil {
 		logger.Errorw("channel_catalog_list_categories", "error", err)
 		respondChannelError(c, 500, 500, "internal_error", "error.internal_error", err)
@@ -219,7 +219,7 @@ func (h *Handler) GetProductDetail(c *gin.Context) {
 		respondChannelError(c, 500, 500, "internal_error", "error.internal_error", err)
 		return
 	}
-	if product == nil || !product.IsActive {
+	if product == nil || !product.IsActive || !product.Category.IsActive {
 		respondChannelError(c, 404, 404, "product_not_found", "error.product_not_found", nil)
 		return
 	}
@@ -316,6 +316,7 @@ func (h *Handler) GetProductDetail(c *gin.Context) {
 		"stock_count":           computeStockCount(effectiveFT, product.AutoStockAvailable, product.ManualStockTotal),
 		"category_name":         resolveLocalizedJSON(product.Category.NameJSON, locale, defaultLocale),
 		"fulfillment_type":      effectiveFT,
+		"min_purchase_quantity": normalizeChannelMinPurchaseQuantity(product.MinPurchaseQuantity),
 		"max_purchase_quantity": normalizeChannelMaxPurchaseQuantity(product.MaxPurchaseQuantity),
 		"manual_form_schema":    normalizeChannelManualFormSchema(product.ManualFormSchemaJSON, locale, defaultLocale),
 		"purchase_note":         "",
@@ -462,6 +463,13 @@ func computeStockCount(fulfillmentType string, autoStockAvailable int64, manualS
 }
 
 func normalizeChannelMaxPurchaseQuantity(value int) int {
+	if value <= 0 {
+		return 0
+	}
+	return value
+}
+
+func normalizeChannelMinPurchaseQuantity(value int) int {
 	if value <= 0 {
 		return 0
 	}

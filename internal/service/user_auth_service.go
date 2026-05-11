@@ -17,6 +17,7 @@ import (
 	"github.com/dujiao-next/internal/repository"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -63,7 +64,32 @@ type UserJWTClaims struct {
 	UserID       uint   `json:"user_id"`
 	Email        string `json:"email"`
 	TokenVersion uint64 `json:"token_version"`
+	Typ          string `json:"typ,omitempty"`
 	jwt.RegisteredClaims
+}
+
+// UserChallengeClaims 用户 2FA 挑战 token claims
+//
+// 注：Typ 字段同时占用与 UserJWTClaims 兼容的 typ 键，写入 "2fa_challenge"，
+// 防止挑战 token 在被错误地解析为 UserJWTClaims 时通过中间件的 typ 校验。
+type UserChallengeClaims struct {
+	UserID     uint   `json:"user_id"`
+	JTI        string `json:"jti"`
+	Purpose    string `json:"purpose"`
+	RememberMe bool   `json:"remember_me"`
+	Typ        string `json:"typ"`
+	jwt.RegisteredClaims
+}
+
+// UserLoginResult 用户登录第一步结果
+type UserLoginResult struct {
+	RequiresTOTP       bool
+	User               *models.User
+	Token              string
+	ExpiresAt          time.Time
+	ChallengeToken     string
+	ChallengeJTI       string
+	ChallengeExpiresAt time.Time
 }
 
 const (
@@ -88,6 +114,7 @@ func (s *UserAuthService) GenerateUserJWT(user *models.User, expireHours int) (s
 		UserID:       user.ID,
 		Email:        user.Email,
 		TokenVersion: user.TokenVersion,
+		Typ:          TokenTypAccess,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -238,34 +265,42 @@ func (s *UserAuthService) Register(email, password, code string, agreementAccept
 	return user, token, expiresAt, nil
 }
 
-// Login 用户登录
-func (s *UserAuthService) Login(email, password string) (*models.User, string, time.Time, error) {
-	return s.LoginWithRememberMe(email, password, false)
-}
-
-// LoginWithRememberMe 用户登录（支持记住我）
-func (s *UserAuthService) LoginWithRememberMe(email, password string, rememberMe bool) (*models.User, string, time.Time, error) {
+// LoginStep1 用户密码登录第一步：校验密码，根据是否启用 2FA 返回 challenge token 或正式 JWT。
+func (s *UserAuthService) LoginStep1(email, password string, rememberMe bool) (*UserLoginResult, error) {
 	normalized, err := normalizeEmail(email)
 	if err != nil {
-		return nil, "", time.Time{}, err
+		return nil, err
 	}
 	user, err := s.userRepo.GetByEmail(normalized)
 	if err != nil {
-		return nil, "", time.Time{}, err
+		return nil, err
 	}
 	if user == nil {
-		// 执行虚拟 bcrypt 比较以防止时序攻击泄露邮箱是否存在
 		_ = bcrypt.CompareHashAndPassword([]byte("$2a$10$dummyhashtopreventtimingattacksxxxxxxxxxxxxxxxxxx"), []byte(password))
-		return nil, "", time.Time{}, ErrInvalidCredentials
+		return nil, ErrInvalidCredentials
 	}
 	if strings.ToLower(user.Status) != constants.UserStatusActive {
-		return nil, "", time.Time{}, ErrUserDisabled
+		return nil, ErrUserDisabled
 	}
 	if user.EmailVerifiedAt == nil {
-		return nil, "", time.Time{}, ErrEmailNotVerified
+		return nil, ErrEmailNotVerified
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
-		return nil, "", time.Time{}, ErrInvalidCredentials
+		return nil, ErrInvalidCredentials
+	}
+
+	if user.TOTPEnabledAt != nil {
+		challenge, jti, expiresAt, err := s.IssueUserChallengeToken(user.ID, rememberMe)
+		if err != nil {
+			return nil, err
+		}
+		return &UserLoginResult{
+			RequiresTOTP:       true,
+			User:               user,
+			ChallengeToken:     challenge,
+			ChallengeJTI:       jti,
+			ChallengeExpiresAt: expiresAt,
+		}, nil
 	}
 
 	expireHours := resolveUserJWTExpireHours(s.cfg.UserJWT)
@@ -274,17 +309,91 @@ func (s *UserAuthService) LoginWithRememberMe(email, password string, rememberMe
 	}
 	token, expiresAt, err := s.GenerateUserJWT(user, expireHours)
 	if err != nil {
-		return nil, "", time.Time{}, err
+		return nil, err
 	}
-
 	now := time.Now()
 	user.LastLoginAt = &now
 	if err := s.userRepo.Update(user); err != nil {
-		return nil, "", time.Time{}, err
+		return nil, err
 	}
 	_ = cache.SetUserAuthState(context.Background(), cache.BuildUserAuthState(user))
 
-	return user, token, expiresAt, nil
+	return &UserLoginResult{
+		RequiresTOTP: false,
+		User:         user,
+		Token:        token,
+		ExpiresAt:    expiresAt,
+	}, nil
+}
+
+// IssueUserChallengeToken 签发用户 2FA 挑战 token
+func (s *UserAuthService) IssueUserChallengeToken(userID uint, rememberMe bool) (token, jti string, expiresAt time.Time, err error) {
+	jti = uuid.NewString()
+	expiresAt = time.Now().Add(UserChallengeTTL)
+	claims := UserChallengeClaims{
+		UserID:     userID,
+		JTI:        jti,
+		Purpose:    UserChallengePurpose2FA,
+		RememberMe: rememberMe,
+		Typ:        TokenTyp2FAChallenge,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expiresAt),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			NotBefore: jwt.NewNumericDate(time.Now()),
+			ID:        jti,
+		},
+	}
+	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signed, err := t.SignedString([]byte(s.cfg.UserJWT.SecretKey))
+	if err != nil {
+		return "", "", time.Time{}, err
+	}
+	return signed, jti, expiresAt, nil
+}
+
+// ParseUserChallengeToken 解析并校验用户挑战 token
+func (s *UserAuthService) ParseUserChallengeToken(tokenString string) (*UserChallengeClaims, error) {
+	parser := newHS256JWTParser()
+	tok, err := parser.ParseWithClaims(tokenString, &UserChallengeClaims{}, func(token *jwt.Token) (interface{}, error) {
+		return []byte(s.cfg.UserJWT.SecretKey), nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	claims, ok := tok.Claims.(*UserChallengeClaims)
+	if !ok || !tok.Valid {
+		return nil, errors.New("invalid challenge token")
+	}
+	if claims.Purpose != UserChallengePurpose2FA || claims.Typ != TokenTyp2FAChallenge {
+		return nil, errors.New("invalid challenge purpose")
+	}
+	return claims, nil
+}
+
+// CompleteLoginAfter2FA 用户 2FA 验证通过后完成登录：发正式 JWT、更新 last_login
+func (s *UserAuthService) CompleteLoginAfter2FA(userID uint, rememberMe bool) (*UserLoginResult, error) {
+	user, err := s.userRepo.GetByID(userID)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, ErrNotFound
+	}
+	expireHours := resolveUserJWTExpireHours(s.cfg.UserJWT)
+	if rememberMe {
+		expireHours = resolveRememberMeExpireHours(s.cfg.UserJWT)
+	}
+	token, expiresAt, err := s.GenerateUserJWT(user, expireHours)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	user.LastLoginAt = &now
+	if err := s.userRepo.Update(user); err != nil {
+		return nil, err
+	}
+	_ = cache.SetUserAuthState(context.Background(), cache.BuildUserAuthState(user))
+	return &UserLoginResult{RequiresTOTP: false, User: user, Token: token, ExpiresAt: expiresAt}, nil
 }
 
 func (s *UserAuthService) verifyCode(email, purpose, code string) (*models.EmailVerifyCode, error) {

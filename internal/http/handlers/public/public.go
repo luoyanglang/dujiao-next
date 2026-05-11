@@ -71,6 +71,7 @@ func (v *publicProductView) toProductResp() dto.ProductResp {
 		ID:                   v.Product.ID,
 		CategoryID:           v.Product.CategoryID,
 		Slug:                 v.Product.Slug,
+		SeoMeta:              v.Product.SeoMetaJSON,
 		Title:                v.Product.TitleJSON,
 		Description:          v.Product.DescriptionJSON,
 		Content:              v.Product.ContentJSON,
@@ -78,6 +79,7 @@ func (v *publicProductView) toProductResp() dto.ProductResp {
 		Images:               v.Product.Images,
 		Tags:                 v.Product.Tags,
 		PurchaseType:         v.Product.PurchaseType,
+		MinPurchaseQuantity:  v.Product.MinPurchaseQuantity,
 		MaxPurchaseQuantity:  v.Product.MaxPurchaseQuantity,
 		FulfillmentType:      v.Product.FulfillmentType,
 		ManualFormSchema:     v.Product.ManualFormSchemaJSON,
@@ -690,7 +692,7 @@ func (h *Handler) GetPostBySlug(c *gin.Context) {
 
 // GetCategories 获取分类列表
 func (h *Handler) GetCategories(c *gin.Context) {
-	categories, err := h.CategoryService.List()
+	categories, err := h.CategoryService.ListActive()
 	if err != nil {
 		shared.RespondError(c, response.CodeInternal, "error.category_fetch_failed", err)
 		return

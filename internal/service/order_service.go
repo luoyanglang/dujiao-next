@@ -222,6 +222,7 @@ type orderCreateParams struct {
 	ClientIP            string
 	IsGuest             bool
 	ManualFormData      map[string]models.JSON
+	SkipManualFormCheck bool
 	SkipRiskControl     bool
 	SkipIPRiskControl   bool
 }
@@ -239,18 +240,20 @@ type OrderPreview struct {
 
 // OrderPreviewItem 订单项金额预览
 type OrderPreviewItem struct {
-	ProductID         uint               `json:"product_id"`
-	SKUID             uint               `json:"sku_id"`
-	TitleJSON         models.JSON        `json:"title"`
-	SKUSnapshotJSON   models.JSON        `json:"sku_snapshot"`
-	Tags              models.StringArray `json:"tags"`
-	UnitPrice         models.Money       `json:"unit_price"`
-	Quantity          int                `json:"quantity"`
-	TotalPrice        models.Money       `json:"total_price"`
-	MemberDiscount    models.Money       `json:"member_discount_amount"`
-	CouponDiscount    models.Money       `json:"coupon_discount_amount"`
-	PromotionDiscount models.Money       `json:"promotion_discount_amount"`
-	FulfillmentType   string             `json:"fulfillment_type"`
+	ProductID          uint               `json:"product_id"`
+	SKUID              uint               `json:"sku_id"`
+	TitleJSON          models.JSON        `json:"title"`
+	SKUSnapshotJSON    models.JSON        `json:"sku_snapshot"`
+	Tags               models.StringArray `json:"tags"`
+	OriginalUnitPrice  models.Money       `json:"original_unit_price"`
+	UnitPrice          models.Money       `json:"unit_price"`
+	Quantity           int                `json:"quantity"`
+	OriginalTotalPrice models.Money       `json:"original_total_price"`
+	TotalPrice         models.Money       `json:"total_price"`
+	MemberDiscount     models.Money       `json:"member_discount_amount"`
+	CouponDiscount     models.Money       `json:"coupon_discount_amount"`
+	PromotionDiscount  models.Money       `json:"promotion_discount_amount"`
+	FulfillmentType    string             `json:"fulfillment_type"`
 }
 
 type orderBuildResult struct {
@@ -280,6 +283,7 @@ func (s *OrderService) PreviewOrder(input CreateOrderInput) (*OrderPreview, erro
 		AffiliateVisitorKey: input.AffiliateVisitorKey,
 		ClientIP:            input.ClientIP,
 		ManualFormData:      input.ManualFormData,
+		SkipManualFormCheck: true,
 	})
 }
 
@@ -296,6 +300,7 @@ func (s *OrderService) PreviewGuestOrder(input CreateGuestOrderInput) (*OrderPre
 		ClientIP:            input.ClientIP,
 		IsGuest:             true,
 		ManualFormData:      input.ManualFormData,
+		SkipManualFormCheck: true,
 	})
 }
 
@@ -308,18 +313,20 @@ func (s *OrderService) previewOrder(input orderCreateParams) (*OrderPreview, err
 	for _, plan := range result.Plans {
 		item := plan.Item
 		items = append(items, OrderPreviewItem{
-			ProductID:         item.ProductID,
-			SKUID:             item.SKUID,
-			TitleJSON:         item.TitleJSON,
-			SKUSnapshotJSON:   item.SKUSnapshotJSON,
-			Tags:              item.Tags,
-			UnitPrice:         item.UnitPrice,
-			Quantity:          item.Quantity,
-			TotalPrice:        item.TotalPrice,
-			MemberDiscount:    item.MemberDiscount,
-			CouponDiscount:    item.CouponDiscount,
-			PromotionDiscount: item.PromotionDiscount,
-			FulfillmentType:   item.FulfillmentType,
+			ProductID:          item.ProductID,
+			SKUID:              item.SKUID,
+			TitleJSON:          item.TitleJSON,
+			SKUSnapshotJSON:    item.SKUSnapshotJSON,
+			Tags:               item.Tags,
+			OriginalUnitPrice:  item.OriginalUnitPrice,
+			UnitPrice:          item.UnitPrice,
+			Quantity:           item.Quantity,
+			OriginalTotalPrice: item.OriginalTotalPrice,
+			TotalPrice:         item.TotalPrice,
+			MemberDiscount:     item.MemberDiscount,
+			CouponDiscount:     item.CouponDiscount,
+			PromotionDiscount:  item.PromotionDiscount,
+			FulfillmentType:    item.FulfillmentType,
 		})
 	}
 	return &OrderPreview{

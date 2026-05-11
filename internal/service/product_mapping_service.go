@@ -105,9 +105,17 @@ func (s *ProductMappingService) ImportUpstreamProduct(connectionID uint, upstrea
 
 	upProduct, err := adapter.GetProduct(ctx, upstreamProductID)
 	if err != nil {
+		// 上游已删除或已下架（旧上游兜底）→ 不允许导入
+		if errors.Is(err, upstream.ErrUpstreamProductDeleted) || errors.Is(err, upstream.ErrUpstreamProductUnavailable) {
+			return nil, ErrUpstreamProductNotFound
+		}
 		return nil, fmt.Errorf("fetch upstream product: %w", err)
 	}
 	if upProduct == nil {
+		return nil, ErrUpstreamProductNotFound
+	}
+	// 新版上游对下架商品返回 200 + is_active=false → 同样禁止导入
+	if !upProduct.IsActive {
 		return nil, ErrUpstreamProductNotFound
 	}
 
@@ -423,10 +431,25 @@ func (s *ProductMappingService) SyncProduct(mappingID uint) error {
 
 	upProduct, err := adapter.GetProduct(ctx, mapping.UpstreamProductID)
 	if err != nil {
+		// 上游软删除 → 标记本地为 deleted，自动停用映射
+		if errors.Is(err, upstream.ErrUpstreamProductDeleted) {
+			now := time.Now()
+			return s.markUpstreamUnavailable(mapping, models.UpstreamStatusDeleted, now)
+		}
+		// 旧版上游下架兜底（新版上游下架返回 200 + is_active=false，走下方分支）
+		if errors.Is(err, upstream.ErrUpstreamProductUnavailable) {
+			now := time.Now()
+			return s.markUpstreamUnavailable(mapping, models.UpstreamStatusInactive, now)
+		}
 		return fmt.Errorf("fetch upstream product: %w", err)
 	}
 
 	now := time.Now()
+
+	// 上游 200 但 is_active=false → 视为下架
+	if !upProduct.IsActive {
+		return s.markUpstreamUnavailable(mapping, models.UpstreamStatusInactive, now)
+	}
 
 	// ── 1. 同步本地商品字段（表单配置、上下架状态） ──
 	localProduct, err := s.productRepo.GetByID(strconv.FormatUint(uint64(mapping.LocalProductID), 10))
@@ -434,21 +457,9 @@ func (s *ProductMappingService) SyncProduct(mappingID uint) error {
 		return fmt.Errorf("get local product: %w", err)
 	}
 	if localProduct != nil {
-		changed := false
-
 		// 同步人工交付表单配置
 		if upProduct.ManualFormSchema != nil {
 			localProduct.ManualFormSchemaJSON = upProduct.ManualFormSchema
-			changed = true
-		}
-
-		// 如果上游商品已下架，本地也自动下架（但上游上架不自动上架，留给管理员决定）
-		if !upProduct.IsActive && localProduct.IsActive {
-			localProduct.IsActive = false
-			changed = true
-		}
-
-		if changed {
 			_ = s.productRepo.Update(localProduct)
 		}
 	}
@@ -552,14 +563,64 @@ func (s *ProductMappingService) SyncProduct(mappingID uint) error {
 		s.recalcProductPrice(localProduct)
 	}
 
-	// ── 3. 更新同步时间 + 上游交付类型 ──
+	// ── 3. 更新同步时间 + 上游交付类型 + 状态恢复 ──
 	upFulfillment := upProduct.FulfillmentType
 	if upFulfillment != constants.FulfillmentTypeAuto {
 		upFulfillment = constants.FulfillmentTypeManual
 	}
 	mapping.UpstreamFulfillmentType = upFulfillment
+	mapping.UpstreamStatus = models.UpstreamStatusActive
 	mapping.LastSyncedAt = &now
 	return s.mappingRepo.Update(mapping)
+}
+
+// markUpstreamUnavailable 上游下架/删除时的统一处理
+// status: models.UpstreamStatusInactive(下架) / models.UpstreamStatusDeleted(已删除)
+//   - 本地 Product 下架（IsActive=false），不删除
+//   - 所有 SKUMapping 标记为 UpstreamIsActive=false, UpstreamStock=0
+//   - 所有本地 SKU 下架
+//   - mapping.UpstreamStatus 写入对应状态
+//   - status==deleted 时同时停用映射（IsActive=false），避免后续白白调上游
+func (s *ProductMappingService) markUpstreamUnavailable(mapping *models.ProductMapping, status string, now time.Time) error {
+	// 本地商品下架
+	localProduct, err := s.productRepo.GetByID(strconv.FormatUint(uint64(mapping.LocalProductID), 10))
+	if err == nil && localProduct != nil && localProduct.IsActive {
+		localProduct.IsActive = false
+		_ = s.productRepo.Update(localProduct)
+	}
+
+	// SKU 映射 + 本地 SKU 下架
+	skuMappings, _ := s.skuMappingRepo.ListByProductMapping(mapping.ID)
+	for i := range skuMappings {
+		skuMappings[i].UpstreamIsActive = false
+		skuMappings[i].UpstreamStock = 0
+		skuMappings[i].StockSyncedAt = &now
+		_ = s.skuMappingRepo.Update(&skuMappings[i])
+
+		localSKU, _ := s.productSKURepo.GetByID(skuMappings[i].LocalSKUID)
+		if localSKU != nil && localSKU.IsActive {
+			localSKU.IsActive = false
+			_ = s.productSKURepo.Update(localSKU)
+		}
+	}
+
+	mapping.UpstreamStatus = status
+	mapping.LastSyncedAt = &now
+	if status == models.UpstreamStatusDeleted {
+		mapping.IsActive = false
+	}
+	if err := s.mappingRepo.Update(mapping); err != nil {
+		return err
+	}
+
+	logger.Infow("upstream_product_unavailable",
+		"mapping_id", mapping.ID,
+		"connection_id", mapping.ConnectionID,
+		"upstream_product_id", mapping.UpstreamProductID,
+		"local_product_id", mapping.LocalProductID,
+		"status", status,
+	)
+	return nil
 }
 
 // SyncAllStock 同步所有活跃映射的库存（供定时任务调用）
@@ -618,6 +679,10 @@ func (s *ProductMappingService) SyncAllStock() error {
 	return errors.Join(errs...)
 }
 
+// fullSyncInterval 强制全量同步间隔：超过此时长后下次同步必走全量，
+// 用于发现上游下架/删除（增量模式下这些商品不会再次出现在 updated_after 之后的列表里）
+const fullSyncInterval = 24 * time.Hour
+
 // syncConnectionStock 按连接批量同步：一次 ListProducts 拉取所有商品，内存匹配映射
 func (s *ProductMappingService) syncConnectionStock(connectionID uint, connMappings []models.ProductMapping) error {
 	conn, err := s.connService.GetByID(connectionID)
@@ -633,6 +698,7 @@ func (s *ProductMappingService) syncConnectionStock(connectionID uint, connMappi
 	// 读取上次同步时间用于增量同步
 	syncCtx := context.Background()
 	lastSyncKey := fmt.Sprintf("upstream:last_sync:%d", connectionID)
+	lastFullSyncKey := fmt.Sprintf("upstream:last_full_sync:%d", connectionID)
 	var updatedAfter *time.Time
 	if lastSyncStr, err := cache.GetString(syncCtx, lastSyncKey); err == nil && lastSyncStr != "" {
 		if t, err := time.Parse(time.RFC3339, lastSyncStr); err == nil {
@@ -641,18 +707,37 @@ func (s *ProductMappingService) syncConnectionStock(connectionID uint, connMappi
 			updatedAfter = &safeTime
 		}
 	}
+
+	// 距离上次全量超过阈值则强制走全量，用于发现上游下架/删除
+	if updatedAfter != nil {
+		if lastFullStr, err := cache.GetString(syncCtx, lastFullSyncKey); err == nil && lastFullStr != "" {
+			if t, parseErr := time.Parse(time.RFC3339, lastFullStr); parseErr == nil {
+				if time.Since(t) >= fullSyncInterval {
+					logger.Infow("sync_force_full", "connection_id", connectionID, "last_full_sync", t)
+					updatedAfter = nil
+				}
+			}
+		} else {
+			// 从未记录过全量时间 → 本次走全量
+			updatedAfter = nil
+		}
+	}
+
 	syncStartTime := time.Now()
 
-	// 批量拉取上游商品（分页）
+	// 批量拉取上游商品（分页）。include_inactive=true 让上游连同已下架商品一起返回，
+	// 下游凭此识别"上游已下架"和"上游已删除"两种状态。
 	upstreamProducts := make(map[uint]upstream.UpstreamProduct)
+	includesInactive := false
 	page := 1
 	const pageSize = 50
 	for {
 		ctx, cancel := context.WithTimeout(syncCtx, 30*time.Second)
 		result, err := adapter.ListProducts(ctx, upstream.ListProductsOpts{
-			Page:         page,
-			PageSize:     pageSize,
-			UpdatedAfter: updatedAfter,
+			Page:            page,
+			PageSize:        pageSize,
+			UpdatedAfter:    updatedAfter,
+			IncludeInactive: true,
 		})
 		cancel()
 		if err != nil {
@@ -665,6 +750,11 @@ func (s *ProductMappingService) syncConnectionStock(connectionID uint, connMappi
 				continue
 			}
 			return fmt.Errorf("list upstream products page %d: %w", page, err)
+		}
+
+		// 上游回声字段：旧版上游不识别 include_inactive，会返回 false
+		if page == 1 {
+			includesInactive = result.IncludesInactive
 		}
 
 		for _, p := range result.Items {
@@ -690,20 +780,33 @@ func (s *ProductMappingService) syncConnectionStock(connectionID uint, connMappi
 
 	// 对每个映射执行同步
 	now := time.Now()
+	isFullSync := updatedAfter == nil
 	for i := range connMappings {
 		mapping := &connMappings[i]
 		upProduct, ok := upstreamProducts[mapping.UpstreamProductID]
 		if !ok {
-			if updatedAfter != nil {
+			if !isFullSync {
 				// 增量模式下未返回说明没有变化，跳过
 				continue
 			}
-			// 全量模式下未找到说明上游已删除/下架
-			logger.Warnw("sync_upstream_product_missing",
+			// 全量模式 + 上游真实支持 include_inactive：下架商品也应在列表中，
+			// 仍然 missing 即说明上游已软删除。
+			if includesInactive {
+				_ = s.markUpstreamUnavailable(mapping, models.UpstreamStatusDeleted, now)
+				continue
+			}
+			// 旧上游不支持 include_inactive，无法区分"下架"和"删除"，
+			// 仅打日志告警避免误下架（管理员可手动同步触发判定）。
+			logger.Warnw("sync_upstream_product_missing_legacy",
 				"connection_id", connectionID,
 				"upstream_product_id", mapping.UpstreamProductID,
 				"local_product_id", mapping.LocalProductID,
 			)
+			continue
+		}
+		// 上游 is_active=false → 标记为 inactive
+		if !upProduct.IsActive {
+			_ = s.markUpstreamUnavailable(mapping, models.UpstreamStatusInactive, now)
 			continue
 		}
 		s.syncProductFromData(mapping, conn, &upProduct, &now)
@@ -711,17 +814,22 @@ func (s *ProductMappingService) syncConnectionStock(connectionID uint, connMappi
 
 	// 记录本次同步时间
 	_ = cache.SetString(syncCtx, lastSyncKey, syncStartTime.Format(time.RFC3339), 48*time.Hour)
+	if isFullSync {
+		_ = cache.SetString(syncCtx, lastFullSyncKey, syncStartTime.Format(time.RFC3339), 7*24*time.Hour)
+	}
 
 	logger.Infow("sync_connection_stock_done",
 		"connection_id", connectionID,
 		"mappings", len(connMappings),
 		"upstream_fetched", len(upstreamProducts),
-		"incremental", updatedAfter != nil,
+		"incremental", !isFullSync,
+		"includes_inactive", includesInactive,
 	)
 	return nil
 }
 
 // syncProductFromData 使用已拉取的上游数据同步单个映射（不再发 HTTP 请求）
+// 调用方应保证 upProduct.IsActive == true（下架/删除分支由 caller 处理）
 func (s *ProductMappingService) syncProductFromData(mapping *models.ProductMapping, conn *models.SiteConnection, upProduct *upstream.UpstreamProduct, now *time.Time) {
 	// ── 1. 同步本地商品字段 ──
 	localProduct, err := s.productRepo.GetByID(strconv.FormatUint(uint64(mapping.LocalProductID), 10))
@@ -729,16 +837,8 @@ func (s *ProductMappingService) syncProductFromData(mapping *models.ProductMappi
 		return
 	}
 
-	changed := false
 	if upProduct.ManualFormSchema != nil {
 		localProduct.ManualFormSchemaJSON = upProduct.ManualFormSchema
-		changed = true
-	}
-	if !upProduct.IsActive && localProduct.IsActive {
-		localProduct.IsActive = false
-		changed = true
-	}
-	if changed {
 		_ = s.productRepo.Update(localProduct)
 	}
 
@@ -851,12 +951,13 @@ func (s *ProductMappingService) syncProductFromData(mapping *models.ProductMappi
 		s.recalcProductPrice(localProduct)
 	}
 
-	// ── 3. 更新映射记录 ──
+	// ── 3. 更新映射记录（同时把状态从 inactive/deleted 恢复为 active）──
 	upFulfillment := upProduct.FulfillmentType
 	if upFulfillment != constants.FulfillmentTypeAuto {
 		upFulfillment = constants.FulfillmentTypeManual
 	}
 	mapping.UpstreamFulfillmentType = upFulfillment
+	mapping.UpstreamStatus = models.UpstreamStatusActive
 	mapping.LastSyncedAt = now
 	_ = s.mappingRepo.Update(mapping)
 }

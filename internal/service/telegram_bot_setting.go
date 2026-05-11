@@ -178,23 +178,7 @@ func TelegramBotConfigDefault() TelegramBotConfigSetting {
 			},
 		},
 		Menu: TelegramBotMenuConfig{
-			Items: []TelegramBotMenuItem{
-				{
-					Key: "shop_home", Enabled: true, Order: 1,
-					Label:  LocalizedText{"zh-CN": "🛍️ 开始购物", "zh-TW": "🛍️ 開始購物", "en-US": "🛍️ Shop Now"},
-					Action: TelegramBotMenuAction{Type: "builtin", Value: ""},
-				},
-				{
-					Key: "my_orders", Enabled: true, Order: 2,
-					Label:  LocalizedText{"zh-CN": "📦 我的订单", "zh-TW": "📦 我的訂單", "en-US": "📦 My Orders"},
-					Action: TelegramBotMenuAction{Type: "builtin", Value: ""},
-				},
-				{
-					Key: "contact_support", Enabled: true, Order: 3,
-					Label:  LocalizedText{"zh-CN": "❓ 帮助中心", "zh-TW": "❓ 幫助中心", "en-US": "❓ Help"},
-					Action: TelegramBotMenuAction{Type: "builtin", Value: ""},
-				},
-			},
+			Items: defaultBuiltinMenuItems(),
 		},
 	}
 }
@@ -438,6 +422,7 @@ func (s *SettingService) GetTelegramBotConfig() (*TelegramBotConfigSetting, erro
 		return &fallback, nil
 	}
 	parsed := telegramBotConfigFromJSON(value, fallback)
+	parsed.Menu.Items = ensureBuiltinMenuItems(parsed.Menu.Items)
 	return &parsed, nil
 }
 
@@ -612,12 +597,87 @@ func normalizeHelpItems(items []TelegramBotHelpItem) []TelegramBotHelpItem {
 	return result
 }
 
-// normalizeMenuItems 归一化菜单项：trim、归一化 label、验证 action type、上限 20 项
+// builtinMenuKeysOrder 内置菜单 key 显示顺序，必须与 telegram-bot 端 builtinMenuButtons 保持一致。
+// 后台 default seed、补齐缺失项时均按该顺序生成。
+var builtinMenuKeysOrder = []string{
+	"shop_home",
+	"my_orders",
+	"my_wallet",
+	"affiliate",
+	"gift_card",
+	"switch_language",
+	"contact_support",
+}
+
+// builtinMenuLabels 内置菜单的多语言默认 label（与 telegram-bot 的 i18n 默认值一致）。
+var builtinMenuLabels = map[string]LocalizedText{
+	"shop_home":       {"zh-CN": "🛍️ 开始购物", "zh-TW": "🛍️ 開始購物", "en-US": "🛍️ Shop Now"},
+	"my_orders":       {"zh-CN": "📦 我的订单", "zh-TW": "📦 我的訂單", "en-US": "📦 My Orders"},
+	"my_wallet":       {"zh-CN": "💰 我的钱包", "zh-TW": "💰 我的錢包", "en-US": "💰 My Wallet"},
+	"affiliate":       {"zh-CN": "📣 推广返利", "zh-TW": "📣 推廣返利", "en-US": "📣 Affiliate"},
+	"gift_card":       {"zh-CN": "🎁 礼品卡兑换", "zh-TW": "🎁 禮品卡兌換", "en-US": "🎁 Redeem Gift Card"},
+	"switch_language": {"zh-CN": "🌐 切换语言", "zh-TW": "🌐 切換語言", "en-US": "🌐 Language"},
+	"contact_support": {"zh-CN": "❓ 帮助中心", "zh-TW": "❓ 幫助中心", "en-US": "❓ Help"},
+}
+
+// defaultBuiltinMenuItems 返回 7 项内置菜单的默认配置（用于 default seed 与缺失补齐）。
+func defaultBuiltinMenuItems() []TelegramBotMenuItem {
+	items := make([]TelegramBotMenuItem, 0, len(builtinMenuKeysOrder))
+	for i, key := range builtinMenuKeysOrder {
+		labelSrc := builtinMenuLabels[key]
+		label := make(LocalizedText, len(labelSrc))
+		for k, v := range labelSrc {
+			label[k] = v
+		}
+		items = append(items, TelegramBotMenuItem{
+			Key:     key,
+			Enabled: true,
+			Order:   i + 1,
+			Label:   label,
+			Action:  TelegramBotMenuAction{Type: "builtin", Value: ""},
+		})
+	}
+	return items
+}
+
+// ensureBuiltinMenuItems 补齐缺失的内置菜单 key（保留已有项的 enabled/label/order）。
+// 这样后台 UI 总能看到 7 个内置菜单的开关，避免老库数据缺项导致管理员误以为某些菜单"无法配置"。
+func ensureBuiltinMenuItems(items []TelegramBotMenuItem) []TelegramBotMenuItem {
+	seen := make(map[string]bool, len(items))
+	maxOrder := 0
+	for _, it := range items {
+		seen[it.Key] = true
+		if it.Order > maxOrder {
+			maxOrder = it.Order
+		}
+	}
+	for _, key := range builtinMenuKeysOrder {
+		if seen[key] {
+			continue
+		}
+		maxOrder++
+		labelSrc := builtinMenuLabels[key]
+		label := make(LocalizedText, len(labelSrc))
+		for k, v := range labelSrc {
+			label[k] = v
+		}
+		items = append(items, TelegramBotMenuItem{
+			Key:     key,
+			Enabled: true,
+			Order:   maxOrder,
+			Label:   label,
+			Action:  TelegramBotMenuAction{Type: "builtin", Value: ""},
+		})
+	}
+	return items
+}
+
+// normalizeMenuItems 归一化菜单项：trim、归一化 label、验证 action type、上限 20 项；最后补齐内置 key
 func normalizeMenuItems(items []TelegramBotMenuItem) []TelegramBotMenuItem {
 	if len(items) > menuItemsMaxCount {
 		items = items[:menuItemsMaxCount]
 	}
-	result := make([]TelegramBotMenuItem, 0, len(items))
+	result := make([]TelegramBotMenuItem, 0, len(items)+len(builtinMenuKeysOrder))
 	for _, item := range items {
 		item.Key = strings.TrimSpace(item.Key)
 		item.Label = normalizeLocalizedText(item.Label)
@@ -628,7 +688,7 @@ func normalizeMenuItems(items []TelegramBotMenuItem) []TelegramBotMenuItem {
 		}
 		result = append(result, item)
 	}
-	return result
+	return ensureBuiltinMenuItems(result)
 }
 
 // readLocalizedText 从 JSON map 读取 LocalizedText 字段

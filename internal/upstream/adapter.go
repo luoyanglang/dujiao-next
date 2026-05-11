@@ -2,11 +2,22 @@ package upstream
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/dujiao-next/internal/constants"
 	"github.com/dujiao-next/internal/models"
+)
+
+// 上游商品状态相关哨兵错误（adapter 层归一化）
+var (
+	// ErrUpstreamProductDeleted 上游商品已被软删除（不再存在）
+	ErrUpstreamProductDeleted = errors.New("upstream product deleted")
+	// ErrUpstreamProductUnavailable 上游商品已下架（仍然存在但不可购）
+	// 旧版上游对下架商品返回 product_unavailable，新版改为 200 + is_active=false；
+	// 此错误仅作为旧版兼容兜底使用。
+	ErrUpstreamProductUnavailable = errors.New("upstream product unavailable")
 )
 
 // PingResult 连接测试结果
@@ -21,15 +32,19 @@ type PingResult struct {
 
 // ListProductsOpts 商品列表参数
 type ListProductsOpts struct {
-	Page         int
-	PageSize     int
-	UpdatedAfter *time.Time
+	Page            int
+	PageSize        int
+	UpdatedAfter    *time.Time
+	IncludeInactive bool // 是否包含已下架商品（用于下游识别上游下架/删除）
 }
 
 // ProductListResult 商品列表结果
 type ProductListResult struct {
 	Total int               `json:"total"`
 	Items []UpstreamProduct `json:"items"`
+	// IncludesInactive 上游是否真的返回了下架商品（响应回声字段）
+	// 旧上游不识别 include_inactive 参数，此字段为 false，下游不可据此推断"missing=已删除"
+	IncludesInactive bool `json:"includes_inactive"`
 }
 
 // UpstreamProduct 上游商品信息

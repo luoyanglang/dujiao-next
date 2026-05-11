@@ -174,6 +174,7 @@ func normalizeSiteBrand(raw interface{}) map[string]interface{} {
 	result := map[string]interface{}{
 		"site_name":        "",
 		"site_url":         "",
+		"site_icon":        "",
 		"site_description": normalizeSiteLocalizedField(nil),
 	}
 	brandMap, ok := raw.(map[string]interface{})
@@ -182,6 +183,7 @@ func normalizeSiteBrand(raw interface{}) map[string]interface{} {
 	}
 	result["site_name"] = normalizeSettingText(brandMap["site_name"])
 	result["site_url"] = strings.TrimRight(normalizeSettingText(brandMap["site_url"]), "/")
+	result["site_icon"] = normalizeSettingText(brandMap["site_icon"])
 	result["site_description"] = normalizeSiteLocalizedField(brandMap["site_description"])
 	return result
 }

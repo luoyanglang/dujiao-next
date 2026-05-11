@@ -6,6 +6,13 @@ import (
 	"gorm.io/gorm"
 )
 
+// 上游商品状态枚举（ProductMapping.UpstreamStatus）
+const (
+	UpstreamStatusActive   = "active"   // 正常在售
+	UpstreamStatusInactive = "inactive" // 上游已下架，但商品仍存在
+	UpstreamStatusDeleted  = "deleted"  // 上游已删除（软删），不再存在
+)
+
 // ProductMapping 商品映射表
 type ProductMapping struct {
 	ID                      uint           `gorm:"primarykey" json:"id"`
@@ -13,6 +20,7 @@ type ProductMapping struct {
 	LocalProductID          uint           `gorm:"uniqueIndex;not null" json:"local_product_id"`
 	UpstreamProductID       uint           `gorm:"not null" json:"upstream_product_id"`
 	UpstreamFulfillmentType string         `gorm:"type:varchar(20);not null;default:'manual'" json:"upstream_fulfillment_type"` // 上游原始交付类型（auto/manual）
+	UpstreamStatus          string         `gorm:"type:varchar(16);not null;default:'active';index" json:"upstream_status"`     // 上游商品状态：active/inactive/deleted
 	IsActive                bool           `gorm:"not null;default:true" json:"is_active"`
 	LastSyncedAt            *time.Time     `json:"last_synced_at,omitempty"`
 	CreatedAt               time.Time      `gorm:"index" json:"created_at"`

@@ -64,6 +64,7 @@ func (h *Handler) GetCart(c *gin.Context) {
 			Images:              item.Product.Images,
 			Tags:                item.Product.Tags,
 			PurchaseType:        item.Product.PurchaseType,
+			MinPurchaseQuantity: item.Product.MinPurchaseQuantity,
 			MaxPurchaseQuantity: item.Product.MaxPurchaseQuantity,
 			FulfillmentType:     productFT,
 			IsActive:            item.Product.IsActive,
@@ -118,6 +119,8 @@ func (h *Handler) UpsertCartItem(c *gin.Context) {
 			shared.RespondError(c, response.CodeBadRequest, "error.order_item_invalid", nil)
 		case errors.Is(err, service.ErrProductMaxPurchaseExceeded):
 			shared.RespondError(c, response.CodeBadRequest, "error.product_max_purchase_exceeded", nil)
+		case errors.Is(err, service.ErrProductMinPurchaseNotMet):
+			shared.RespondError(c, response.CodeBadRequest, "error.product_min_purchase_not_met", nil)
 		case errors.Is(err, service.ErrProductNotAvailable):
 			shared.RespondError(c, response.CodeBadRequest, "error.product_not_available", nil)
 		case errors.Is(err, service.ErrManualStockInsufficient):

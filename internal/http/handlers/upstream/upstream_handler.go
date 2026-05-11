@@ -220,19 +220,18 @@ func (h *Handler) ListProducts(c *gin.Context) {
 		pageSize = 50
 	}
 
-	// 支持增量同步：仅返回指定时间之后更新的商品
-	var products []models.Product
-	var total int64
-	var err error
+	// 是否包含下架商品：下游同步任务用此参数识别上游下架/删除状态
+	includeInactive := c.Query("include_inactive") == "true"
+
+	// 解析增量同步时间
+	var updatedAfter *time.Time
 	if updatedAfterStr := c.Query("updated_after"); updatedAfterStr != "" {
 		if t, parseErr := time.Parse(time.RFC3339, updatedAfterStr); parseErr == nil {
-			products, total, err = h.ProductService.ListPublicUpdatedAfter(&t, page, pageSize)
-		} else {
-			products, total, err = h.ProductService.ListPublic("", "", page, pageSize)
+			updatedAfter = &t
 		}
-	} else {
-		products, total, err = h.ProductService.ListPublic("", "", page, pageSize)
 	}
+
+	products, total, err := h.ProductService.ListForUpstreamSync(updatedAfter, includeInactive, page, pageSize)
 	if err != nil {
 		logger.Errorw("upstream_list_products_failed", "error", err)
 		errorResponse(c, http.StatusInternalServerError, "internal_error", "failed to list products")
@@ -266,11 +265,12 @@ func (h *Handler) ListProducts(c *gin.Context) {
 	}
 
 	successResponse(c, gin.H{
-		"ok":        true,
-		"items":     items,
-		"total":     total,
-		"page":      page,
-		"page_size": pageSize,
+		"ok":                true,
+		"items":             items,
+		"total":             total,
+		"page":              page,
+		"page_size":         pageSize,
+		"includes_inactive": includeInactive, // 回声告诉下游本次响应是否包含下架商品
 	})
 }
 
@@ -284,6 +284,7 @@ func (h *Handler) GetProduct(c *gin.Context) {
 
 	product, err := h.ProductService.GetAdminByID(id)
 	if err != nil {
+		// 商品被软删除（数据库不存在）→ 保留 product_not_found 向后兼容旧版下游 adapter
 		if errors.Is(err, service.ErrNotFound) {
 			errorResponse(c, http.StatusNotFound, "product_not_found", "product not found")
 			return
@@ -293,10 +294,8 @@ func (h *Handler) GetProduct(c *gin.Context) {
 		return
 	}
 
-	if !product.IsActive {
-		errorResponse(c, http.StatusNotFound, "product_unavailable", "product is not active")
-		return
-	}
+	// 商品下架（IsActive=false）：仍返回 200，由下游根据 is_active 字段判断
+	// 这样下游可在不下单的前提下感知下架状态、自动同步本地下架
 
 	// 补充自动发货库存计数
 	products := []models.Product{*product}
@@ -585,13 +584,15 @@ func (h *Handler) GetOrder(c *gin.Context) {
 		items := make([]gin.H, 0, len(order.Items))
 		for _, item := range order.Items {
 			items = append(items, gin.H{
-				"product_id":       item.ProductID,
-				"sku_id":           item.SKUID,
-				"title":            item.TitleJSON,
-				"quantity":         item.Quantity,
-				"unit_price":       item.UnitPrice.StringFixed(2),
-				"total_price":      item.TotalPrice.StringFixed(2),
-				"fulfillment_type": item.FulfillmentType,
+				"product_id":           item.ProductID,
+				"sku_id":               item.SKUID,
+				"title":                item.TitleJSON,
+				"quantity":             item.Quantity,
+				"original_unit_price":  item.OriginalUnitPrice.StringFixed(2),
+				"unit_price":           item.UnitPrice.StringFixed(2),
+				"original_total_price": item.OriginalTotalPrice.StringFixed(2),
+				"total_price":          item.TotalPrice.StringFixed(2),
+				"fulfillment_type":     item.FulfillmentType,
 			})
 		}
 		resp["items"] = items

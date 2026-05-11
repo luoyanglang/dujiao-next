@@ -56,10 +56,10 @@ type BindTelegramChannelByEmailCodeInput struct {
 	Code     string
 }
 
-// LoginWithTelegram Telegram 登录
-func (s *UserAuthService) LoginWithTelegram(input LoginWithTelegramInput) (*models.User, string, time.Time, error) {
+// LoginWithTelegram Telegram 登录（已启用 2FA 的账号会返回挑战 token，不直接发 JWT）
+func (s *UserAuthService) LoginWithTelegram(input LoginWithTelegramInput) (*UserLoginResult, error) {
 	if s.telegramAuthService == nil || s.userOAuthIdentityRepo == nil {
-		return nil, "", time.Time{}, ErrTelegramAuthConfigInvalid
+		return nil, ErrTelegramAuthConfigInvalid
 	}
 	ctx := input.Context
 	if ctx == nil {
@@ -67,15 +67,15 @@ func (s *UserAuthService) LoginWithTelegram(input LoginWithTelegramInput) (*mode
 	}
 	verified, err := s.telegramAuthService.VerifyLogin(ctx, input.Payload)
 	if err != nil {
-		return nil, "", time.Time{}, err
+		return nil, err
 	}
 	return s.loginWithVerifiedTelegram(verified)
 }
 
-// LoginWithTelegramMiniApp Telegram Mini App 登录
-func (s *UserAuthService) LoginWithTelegramMiniApp(input LoginWithTelegramMiniAppInput) (*models.User, string, time.Time, error) {
+// LoginWithTelegramMiniApp Telegram Mini App 登录（已启用 2FA 的账号会返回挑战 token，不直接发 JWT）
+func (s *UserAuthService) LoginWithTelegramMiniApp(input LoginWithTelegramMiniAppInput) (*UserLoginResult, error) {
 	if s.telegramAuthService == nil || s.userOAuthIdentityRepo == nil {
-		return nil, "", time.Time{}, ErrTelegramAuthConfigInvalid
+		return nil, ErrTelegramAuthConfigInvalid
 	}
 	ctx := input.Context
 	if ctx == nil {
@@ -83,34 +83,34 @@ func (s *UserAuthService) LoginWithTelegramMiniApp(input LoginWithTelegramMiniAp
 	}
 	verified, err := s.telegramAuthService.VerifyMiniAppInitData(ctx, input.InitData)
 	if err != nil {
-		return nil, "", time.Time{}, err
+		return nil, err
 	}
 	return s.loginWithVerifiedTelegram(verified)
 }
 
-func (s *UserAuthService) loginWithVerifiedTelegram(verified *TelegramIdentityVerified) (*models.User, string, time.Time, error) {
+func (s *UserAuthService) loginWithVerifiedTelegram(verified *TelegramIdentityVerified) (*UserLoginResult, error) {
 	identity, err := s.userOAuthIdentityRepo.GetByProviderUserID(verified.Provider, verified.ProviderUserID)
 	if err != nil {
-		return nil, "", time.Time{}, err
+		return nil, err
 	}
 
 	var user *models.User
 	if identity != nil {
 		user, err = s.getActiveUserByID(identity.UserID)
 		if err != nil {
-			return nil, "", time.Time{}, err
+			return nil, err
 		}
 		identityChanged := applyTelegramIdentity(verified, identity)
 		if identityChanged {
 			identity.UpdatedAt = time.Now()
 			if err := s.userOAuthIdentityRepo.Update(identity); err != nil {
-				return nil, "", time.Time{}, err
+				return nil, err
 			}
 		}
 	} else {
 		user, err = s.findOrCreateTelegramUser(verified)
 		if err != nil {
-			return nil, "", time.Time{}, err
+			return nil, err
 		}
 		identity = &models.UserOAuthIdentity{
 			UserID:         user.ID,
@@ -125,32 +125,52 @@ func (s *UserAuthService) loginWithVerifiedTelegram(verified *TelegramIdentityVe
 		if err := s.userOAuthIdentityRepo.Create(identity); err != nil {
 			existing, getErr := s.userOAuthIdentityRepo.GetByProviderUserID(verified.Provider, verified.ProviderUserID)
 			if getErr != nil {
-				return nil, "", time.Time{}, err
+				return nil, err
 			}
 			if existing == nil {
-				return nil, "", time.Time{}, err
+				return nil, err
 			}
 			identity = existing
 			user, err = s.getActiveUserByID(existing.UserID)
 			if err != nil {
-				return nil, "", time.Time{}, err
+				return nil, err
 			}
 		}
 	}
 
+	// 已启用 2FA → 仅签发挑战 token
+	if user.TOTPEnabledAt != nil {
+		challenge, jti, expiresAt, err := s.IssueUserChallengeToken(user.ID, false)
+		if err != nil {
+			return nil, err
+		}
+		return &UserLoginResult{
+			RequiresTOTP:       true,
+			User:               user,
+			ChallengeToken:     challenge,
+			ChallengeJTI:       jti,
+			ChallengeExpiresAt: expiresAt,
+		}, nil
+	}
+
 	token, expiresAt, err := s.GenerateUserJWT(user, 0)
 	if err != nil {
-		return nil, "", time.Time{}, err
+		return nil, err
 	}
 
 	now := time.Now()
 	user.LastLoginAt = &now
 	user.UpdatedAt = now
 	if err := s.userRepo.Update(user); err != nil {
-		return nil, "", time.Time{}, err
+		return nil, err
 	}
 	_ = cache.SetUserAuthState(context.Background(), cache.BuildUserAuthState(user))
-	return user, token, expiresAt, nil
+	return &UserLoginResult{
+		RequiresTOTP: false,
+		User:         user,
+		Token:        token,
+		ExpiresAt:    expiresAt,
+	}, nil
 }
 
 // BindTelegram 绑定 Telegram
