@@ -49,8 +49,14 @@ func (h *Handler) GetCart(c *gin.Context) {
 		if item.Product == nil {
 			continue
 		}
-		productFT := constants.NormalizeFulfillmentType(item.Product.FulfillmentType)
-		cartFT := constants.NormalizeFulfillmentType(item.FulfillmentType)
+		productFT := item.Product.FulfillmentType
+		if productFT == constants.FulfillmentTypeUpstream {
+			productFT = constants.FulfillmentTypeManual
+		}
+		cartFT := item.FulfillmentType
+		if cartFT == constants.FulfillmentTypeUpstream {
+			cartFT = constants.FulfillmentTypeManual
+		}
 		product := dto.CartProductResp{
 			Slug:                item.Product.Slug,
 			Title:               item.Product.TitleJSON,

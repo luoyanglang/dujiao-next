@@ -238,7 +238,11 @@ func (s *ProductMappingService) ImportUpstreamProduct(connectionID uint, upstrea
 			localSKUs = append(localSKUs, defaultSKU)
 		}
 
-		upstreamFulfillmentType := constants.NormalizeFulfillmentType(upProduct.FulfillmentType)
+		// 确定上游原始交付类型（auto/manual）
+		upstreamFulfillmentType := upProduct.FulfillmentType
+		if upstreamFulfillmentType != constants.FulfillmentTypeAuto {
+			upstreamFulfillmentType = constants.FulfillmentTypeManual
+		}
 
 		now := time.Now()
 		mapping = &models.ProductMapping{
@@ -560,7 +564,10 @@ func (s *ProductMappingService) SyncProduct(mappingID uint) error {
 	}
 
 	// ── 3. 更新同步时间 + 上游交付类型 + 状态恢复 ──
-	upFulfillment := constants.NormalizeFulfillmentType(upProduct.FulfillmentType)
+	upFulfillment := upProduct.FulfillmentType
+	if upFulfillment != constants.FulfillmentTypeAuto {
+		upFulfillment = constants.FulfillmentTypeManual
+	}
 	mapping.UpstreamFulfillmentType = upFulfillment
 	mapping.UpstreamStatus = models.UpstreamStatusActive
 	mapping.LastSyncedAt = &now
@@ -945,7 +952,10 @@ func (s *ProductMappingService) syncProductFromData(mapping *models.ProductMappi
 	}
 
 	// ── 3. 更新映射记录（同时把状态从 inactive/deleted 恢复为 active）──
-	upFulfillment := constants.NormalizeFulfillmentType(upProduct.FulfillmentType)
+	upFulfillment := upProduct.FulfillmentType
+	if upFulfillment != constants.FulfillmentTypeAuto {
+		upFulfillment = constants.FulfillmentTypeManual
+	}
 	mapping.UpstreamFulfillmentType = upFulfillment
 	mapping.UpstreamStatus = models.UpstreamStatusActive
 	mapping.LastSyncedAt = now

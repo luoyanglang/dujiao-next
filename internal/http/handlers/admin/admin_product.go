@@ -373,7 +373,10 @@ func (h *Handler) applyUpstreamDisplayTypes(products []models.Product) {
 		}
 		p := &products[idx]
 
-		displayType := constants.NormalizeFulfillmentType(mp.UpstreamFulfillmentType)
+		displayType := mp.UpstreamFulfillmentType
+		if displayType != constants.FulfillmentTypeAuto {
+			displayType = constants.FulfillmentTypeManual
+		}
 		p.FulfillmentType = displayType
 
 		// 获取 SKU 映射以填充库存字段

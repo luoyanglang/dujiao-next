@@ -301,54 +301,6 @@ func TestSyncProductMarksDeletedWhenUpstreamSoftDeleted(t *testing.T) {
 	}
 }
 
-func TestSyncProductPreservesUpstreamFulfillmentType(t *testing.T) {
-	svc, db, mapping, cleanup := setupMappingWithUpstreamHandler(t,
-		"file:sync_preserve_upstream_fulfillment?mode=memory&cache=shared",
-		func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/api/v1/upstream/products/101" {
-				http.NotFound(w, r)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"ok": true,
-				"product": upstream.UpstreamProduct{
-					ID:              101,
-					Title:           models.JSON{"zh-CN": "上游表单商品"},
-					Description:     models.JSON{"zh-CN": "描述"},
-					Content:         models.JSON{},
-					Images:          []string{},
-					Tags:            []string{},
-					PriceAmount:     "10.00",
-					FulfillmentType: constants.FulfillmentTypeUpstream,
-					ManualFormSchema: models.JSON{
-						"fields": []interface{}{
-							map[string]interface{}{"key": "link", "type": "text", "required": true},
-						},
-					},
-					IsActive: true,
-					SKUs: []upstream.UpstreamSKU{
-						{ID: 201, SKUCode: "SKU-A", PriceAmount: "10.00", IsActive: true},
-					},
-				},
-			})
-		},
-	)
-	defer cleanup()
-
-	if err := svc.SyncProduct(mapping.ID); err != nil {
-		t.Fatalf("SyncProduct returned error: %v", err)
-	}
-
-	var got models.ProductMapping
-	if err := db.First(&got, mapping.ID).Error; err != nil {
-		t.Fatalf("reload mapping failed: %v", err)
-	}
-	if got.UpstreamFulfillmentType != constants.FulfillmentTypeUpstream {
-		t.Fatalf("expected upstream fulfillment type %q, got %q", constants.FulfillmentTypeUpstream, got.UpstreamFulfillmentType)
-	}
-}
-
 func TestSyncProductMarksInactiveWhenUpstreamReturnsInactive(t *testing.T) {
 	svc, db, mapping, cleanup := setupMappingWithUpstreamHandler(t,
 		"file:sync_inactive?mode=memory&cache=shared",

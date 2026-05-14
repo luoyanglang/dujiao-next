@@ -841,7 +841,11 @@ func (h *Handler) resolveEffectiveFulfillmentTypes(products []models.Product) ma
 		return result
 	}
 	for _, m := range mappings {
-		result[m.LocalProductID] = constants.NormalizeFulfillmentType(m.UpstreamFulfillmentType)
+		ft := m.UpstreamFulfillmentType
+		if ft != constants.FulfillmentTypeAuto {
+			ft = constants.FulfillmentTypeManual
+		}
+		result[m.LocalProductID] = ft
 	}
 	return result
 }
