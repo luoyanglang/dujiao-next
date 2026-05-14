@@ -19,7 +19,7 @@ type ProductMapping struct {
 	ConnectionID            uint           `gorm:"index;not null" json:"connection_id"`
 	LocalProductID          uint           `gorm:"uniqueIndex;not null" json:"local_product_id"`
 	UpstreamProductID       uint           `gorm:"not null" json:"upstream_product_id"`
-	UpstreamFulfillmentType string         `gorm:"type:varchar(20);not null;default:'manual'" json:"upstream_fulfillment_type"` // 上游原始交付类型（auto/manual）
+	UpstreamFulfillmentType string         `gorm:"type:varchar(20);not null;default:'manual'" json:"upstream_fulfillment_type"` // 上游原始交付类型（auto/manual/upstream）
 	UpstreamStatus          string         `gorm:"type:varchar(16);not null;default:'active';index" json:"upstream_status"`     // 上游商品状态：active/inactive/deleted
 	IsActive                bool           `gorm:"not null;default:true" json:"is_active"`
 	LastSyncedAt            *time.Time     `json:"last_synced_at,omitempty"`

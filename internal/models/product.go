@@ -23,7 +23,7 @@ type Product struct {
 	PurchaseType         string         `gorm:"type:varchar(20);not null;default:'member'" json:"purchase_type"`    // 购买身份（guest/member）
 	MinPurchaseQuantity  int            `gorm:"not null;default:0" json:"min_purchase_quantity"`                    // 单次最小购买数量（0 表示不限制）
 	MaxPurchaseQuantity  int            `gorm:"not null;default:0" json:"max_purchase_quantity"`                    // 单次最大购买数量（0 表示不限制）
-	FulfillmentType      string         `gorm:"type:varchar(20);not null;default:'manual'" json:"fulfillment_type"` // 交付类型（auto/manual）
+	FulfillmentType      string         `gorm:"type:varchar(20);not null;default:'manual'" json:"fulfillment_type"` // 交付类型（auto/manual/upstream）
 	ManualFormSchemaJSON JSON           `gorm:"type:json" json:"manual_form_schema"`                                // 人工交付表单 schema
 	ManualStockTotal     int            `gorm:"not null;default:0" json:"manual_stock_total"`                       // 手动剩余库存（-1 表示无限库存，>=0 表示当前可售数量）
 	ManualStockLocked    int            `gorm:"not null;default:0" json:"manual_stock_locked"`                      // 手动库存占用量（待支付）

@@ -552,11 +552,8 @@ func (h *Handler) decorateUpstreamStock(product *models.Product, item *publicPro
 		return
 	}
 
-	// 根据上游原始交付类型设置展示类型：auto 还是 manual
-	displayType := mapping.UpstreamFulfillmentType
-	if displayType != constants.FulfillmentTypeAuto {
-		displayType = constants.FulfillmentTypeManual
-	}
+	// 根据上游原始交付类型设置展示类型：auto / manual / upstream
+	displayType := constants.NormalizeFulfillmentType(mapping.UpstreamFulfillmentType)
 	item.Product.FulfillmentType = displayType
 
 	// 获取该映射下的所有 SKU 映射

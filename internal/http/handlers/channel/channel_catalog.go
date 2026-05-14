@@ -492,7 +492,7 @@ func computeStockStatus(fulfillmentType string, autoStockAvailable int64, manual
 }
 
 // applyUpstreamMappings 一次性完成 upstream 映射商品的处理：
-//  1. 批量解析每个映射商品的真实交付类型（auto / manual）；
+//  1. 批量解析每个映射商品的真实交付类型（auto / manual / upstream）；
 //  2. 批量拉取 SKU 映射，并将上游库存写回 Product/SKU 的本地库存字段，
 //     使下游 computeStockStatus / computeStockCount 无需感知 upstream 即可正确工作。
 //
@@ -532,11 +532,7 @@ func (h *Handler) applyUpstreamMappings(products []models.Product) map[uint]stri
 		m := &mappings[i]
 		mappingByProduct[m.LocalProductID] = m
 		mappingIDs = append(mappingIDs, m.ID)
-		ft := m.UpstreamFulfillmentType
-		if ft != constants.FulfillmentTypeAuto {
-			ft = constants.FulfillmentTypeManual
-		}
-		ftMap[m.LocalProductID] = ft
+		ftMap[m.LocalProductID] = constants.NormalizeFulfillmentType(m.UpstreamFulfillmentType)
 	}
 
 	// 没有 mapping 记录的 mapped 商品：降级为有货

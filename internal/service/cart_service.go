@@ -154,7 +154,9 @@ func (s *CartService) UpsertItem(input UpsertCartItemInput) error {
 	if fulfillmentType == "" {
 		fulfillmentType = constants.FulfillmentTypeManual
 	}
-	if fulfillmentType != constants.FulfillmentTypeManual && fulfillmentType != constants.FulfillmentTypeAuto {
+	if fulfillmentType != constants.FulfillmentTypeManual &&
+		fulfillmentType != constants.FulfillmentTypeAuto &&
+		fulfillmentType != constants.FulfillmentTypeUpstream {
 		return ErrFulfillmentInvalid
 	}
 	if fulfillmentType == constants.FulfillmentTypeManual &&

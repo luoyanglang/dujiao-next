@@ -29,6 +29,15 @@ const (
 	FulfillmentStatusDelivered = "delivered"
 )
 
+func NormalizeFulfillmentType(raw string) string {
+	switch raw {
+	case FulfillmentTypeAuto, FulfillmentTypeManual, FulfillmentTypeUpstream:
+		return raw
+	default:
+		return FulfillmentTypeManual
+	}
+}
+
 // 支付状态常量
 const (
 	PaymentStatusInitiated = "initiated"
