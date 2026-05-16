@@ -84,6 +84,11 @@ func (h *Handler) GetAdminUsers(c *gin.Context) {
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
 	page, pageSize = shared.NormalizePagination(page, pageSize)
 
+	userID, err := shared.ParseQueryUint(c.Query("user_id"), true)
+	if err != nil {
+		shared.RespondError(c, response.CodeBadRequest, "error.user_id_invalid", err)
+		return
+	}
 	keyword := strings.TrimSpace(c.Query("keyword"))
 	status := strings.TrimSpace(c.Query("status"))
 	createdFromRaw := strings.TrimSpace(c.Query("created_from"))
@@ -115,6 +120,7 @@ func (h *Handler) GetAdminUsers(c *gin.Context) {
 	users, total, err := h.UserRepo.List(repository.UserListFilter{
 		Page:          page,
 		PageSize:      pageSize,
+		UserID:        userID,
 		Keyword:       keyword,
 		Status:        status,
 		CreatedFrom:   createdFrom,
