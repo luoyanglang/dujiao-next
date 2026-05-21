@@ -14,13 +14,13 @@ import (
 
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // OrderService 订单服务
 type OrderService struct {
 	orderRepo             repository.OrderRepository
 	orderRefundRecordRepo repository.OrderRefundRecordRepository
+	paymentRepo           repository.PaymentRepository
 	userRepo              repository.UserRepository
 	productRepo           repository.ProductRepository
 	productSKURepo        repository.ProductSKURepository
@@ -42,6 +42,7 @@ type OrderService struct {
 type OrderServiceOptions struct {
 	OrderRepo             repository.OrderRepository
 	OrderRefundRecordRepo repository.OrderRefundRecordRepository
+	PaymentRepo           repository.PaymentRepository
 	UserRepo              repository.UserRepository
 	ProductRepo           repository.ProductRepository
 	ProductSKURepo        repository.ProductSKURepository
@@ -64,6 +65,7 @@ func NewOrderService(opts OrderServiceOptions) *OrderService {
 	return &OrderService{
 		orderRepo:             opts.OrderRepo,
 		orderRefundRecordRepo: opts.OrderRefundRecordRepo,
+		paymentRepo:           opts.PaymentRepo,
 		userRepo:              opts.UserRepo,
 		productRepo:           opts.ProductRepo,
 		productSKURepo:        opts.ProductSKURepo,
@@ -490,10 +492,8 @@ func (s *OrderService) createOrder(input orderCreateParams) (*models.Order, erro
 					return ErrCardSecretInsufficient
 				}
 				secretRepo := s.cardSecretRepo.WithTx(tx)
-				var rows []models.CardSecret
-				if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-					Where("product_id = ? AND sku_id = ? AND status = ?", plan.Item.ProductID, plan.Item.SKUID, models.CardSecretStatusAvailable).
-					Order("id asc").Limit(plan.Item.Quantity).Find(&rows).Error; err != nil {
+				rows, err := secretRepo.ListAvailableByProductForUpdate(plan.Item.ProductID, plan.Item.SKUID, plan.Item.Quantity)
+				if err != nil {
 					return err
 				}
 				if len(rows) < plan.Item.Quantity {
