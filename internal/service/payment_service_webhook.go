@@ -8,13 +8,14 @@ import (
 	"github.com/dujiao-next/internal/constants"
 	"github.com/dujiao-next/internal/models"
 	"github.com/dujiao-next/internal/payment/provider"
+	"github.com/dujiao-next/internal/repository"
+
+	"go.uber.org/zap"
 )
 
 // HandleSyncCallback 处理同步 form callback（alipay/epay/epusdt/bepusdt/tokenpay/okpay）。
 // 通过 Registry 找到 adapter 的 CallbackVerifier 能力解析并验签 form/body，然后调 HandleCallback。
 // channel 必须由 caller 加载好传入（handler 负责找到 payment→channel 并验证类型）。
-//
-// P1.2c Task 7: alipay callback handler pilot；Task 8/9 将同模式复用此方法。
 func (s *PaymentService) HandleSyncCallback(
 	channel *models.PaymentChannel,
 	form map[string][]string,
@@ -66,7 +67,6 @@ func (s *PaymentService) HandleSyncCallback(
 }
 
 // HandlePaypalWebhook 处理 PayPal webhook。
-// P1.2c Task 5: 退化为 thin wrapper，通过 handleWebhookViaRegistry 路由解析。
 func (s *PaymentService) HandlePaypalWebhook(input WebhookCallbackInput) (*models.Payment, string, error) {
 	return s.handleWebhookViaRegistry(
 		input,
@@ -76,7 +76,12 @@ func (s *PaymentService) HandlePaypalWebhook(input WebhookCallbackInput) (*model
 }
 
 // handleWebhookViaRegistry 通过 Registry 路由 webhook 解析。
-// Task 5/6: paypal/stripe/wechat 共用此方法。
+//
+// channel_id 在 URL query 缺失时:
+//   - 微信不允许 notify_url 携带 query 参数(微信官方 V3 规范),wechat webhook
+//     必须支持遍历候选 channel,逐个用 api_v3_key 尝试 AES-GCM 解密验签;
+//   - stripe 的 endpoint_secret 也具备同等的"试错验签"能力,顺带支持;
+//   - paypal 的 webhook_id 校验缺乏自识别机制,必须强制 channel_id。
 func (s *PaymentService) handleWebhookViaRegistry(
 	input WebhookCallbackInput,
 	expectedProviderType string,
@@ -89,9 +94,13 @@ func (s *PaymentService) handleWebhookViaRegistry(
 	)
 
 	if input.ChannelID == 0 {
-		log.Warnw("payment_webhook_invalid_channel_id")
-		return nil, "", ErrPaymentInvalid
+		if !supportsBlindWebhookCandidateMatching(expectedChannelType) {
+			log.Warnw("payment_webhook_invalid_channel_id")
+			return nil, "", ErrPaymentInvalid
+		}
+		return s.handleWebhookByCandidateIteration(input, expectedProviderType, expectedChannelType, log)
 	}
+
 	channel, err := s.channelRepo.GetByID(input.ChannelID)
 	if err != nil {
 		log.Errorw("payment_webhook_channel_fetch_failed", "error", err)
@@ -112,20 +121,75 @@ func (s *PaymentService) handleWebhookViaRegistry(
 		return nil, "", ErrPaymentProviderNotSupported
 	}
 
+	result, err := s.tryParseWebhookWithChannel(channel, input)
+	if err != nil {
+		log.Warnw("payment_webhook_parse_failed", "error", err)
+		return nil, "", err
+	}
+	return s.commitVerifiedWebhook(channel, result, log)
+}
+
+// handleWebhookByCandidateIteration 在 channel_id 缺失时,按 expectedProvider+expectedChannel
+// 拉取所有 active channel,挨个尝试解密验签;首个 ParseWebhook 成功的渠道即为目标渠道。
+func (s *PaymentService) handleWebhookByCandidateIteration(
+	input WebhookCallbackInput,
+	expectedProviderType string,
+	expectedChannelType string,
+	log *zap.SugaredLogger,
+) (*models.Payment, string, error) {
+	candidates, _, err := s.channelRepo.List(repository.PaymentChannelListFilter{
+		ProviderType: expectedProviderType,
+		ChannelType:  expectedChannelType,
+		ActiveOnly:   true,
+	})
+	if err != nil {
+		log.Errorw("payment_webhook_candidates_list_failed", "error", err)
+		return nil, "", ErrPaymentUpdateFailed
+	}
+	if len(candidates) == 0 {
+		log.Warnw("payment_webhook_no_candidate_channel")
+		return nil, "", ErrPaymentChannelNotFound
+	}
+
+	var lastErr error
+	for i := range candidates {
+		channel := candidates[i]
+		result, err := s.tryParseWebhookWithChannel(&channel, input)
+		if err != nil {
+			log.Debugw("payment_webhook_candidate_parse_failed",
+				"candidate_channel_id", channel.ID,
+				"error", err,
+			)
+			lastErr = err
+			continue
+		}
+		log.Infow("payment_webhook_candidate_matched", "candidate_channel_id", channel.ID)
+		return s.commitVerifiedWebhook(&channel, result, log)
+	}
+	if lastErr == nil {
+		lastErr = ErrPaymentProviderNotSupported
+	}
+	log.Warnw("payment_webhook_all_candidates_failed", "candidate_count", len(candidates), "last_error", lastErr)
+	return nil, "", lastErr
+}
+
+// tryParseWebhookWithChannel 用指定 channel 的 config 尝试解析 webhook。
+// 返回 error 表示该 channel 不匹配(签名/密钥校验失败或 capability 缺失),
+// 由 caller 决定 retry 下一个候选还是终止。
+func (s *PaymentService) tryParseWebhookWithChannel(
+	channel *models.PaymentChannel,
+	input WebhookCallbackInput,
+) (*provider.WebhookResult, error) {
 	if s.paymentProviderRegistry == nil {
-		return nil, "", ErrPaymentProviderNotSupported
+		return nil, ErrPaymentProviderNotSupported
 	}
 	p, ok := s.paymentProviderRegistry.Lookup(channel.ProviderType, channel.ChannelType)
 	if !ok {
-		return nil, "", ErrPaymentProviderNotSupported
+		return nil, ErrPaymentProviderNotSupported
 	}
 	webhooker, ok := p.(provider.Webhooker)
 	if !ok {
-		log.Warnw("payment_webhook_capability_missing",
-			"provider_type", channel.ProviderType,
-			"channel_type", channel.ChannelType,
-		)
-		return nil, "", ErrPaymentProviderNotSupported
+		return nil, ErrPaymentProviderNotSupported
 	}
 
 	ctx, cancel := detachOutboundRequestContext(input.Context)
@@ -133,11 +197,20 @@ func (s *PaymentService) handleWebhookViaRegistry(
 
 	result, err := webhooker.ParseWebhook(ctx, channel.ConfigJSON, input.Headers, input.Body, time.Now())
 	if err != nil {
-		log.Warnw("payment_webhook_parse_failed", "error", err)
-		return nil, "", mapProviderErrorToService(err)
+		return nil, mapProviderErrorToService(err)
 	}
+	return result, nil
+}
 
+// commitVerifiedWebhook 在 ParseWebhook 验签通过(已确认 channel 归属)后,
+// 反查 payment 并落库。任何错误都是真实的业务/DB 错误,不再 retry 其他 channel。
+func (s *PaymentService) commitVerifiedWebhook(
+	channel *models.PaymentChannel,
+	result *provider.WebhookResult,
+	log *zap.SugaredLogger,
+) (*models.Payment, string, error) {
 	log.Infow("payment_webhook_parsed",
+		"channel_id", channel.ID,
 		"order_no", result.OrderNo,
 		"provider_ref", result.ProviderRef,
 		"status", result.Status,
@@ -146,6 +219,7 @@ func (s *PaymentService) handleWebhookViaRegistry(
 	// status 为空表示 adapter 判断该事件无需处理（不可识别的事件类型），直接忽略。
 	if result.Status == "" {
 		log.Infow("payment_webhook_status_ignored",
+			"channel_id", channel.ID,
 			"order_no", result.OrderNo,
 			"provider_ref", result.ProviderRef,
 		)
@@ -156,6 +230,7 @@ func (s *PaymentService) handleWebhookViaRegistry(
 	if err != nil {
 		if errors.Is(err, ErrPaymentNotFound) {
 			log.Infow("payment_webhook_payment_not_found",
+				"channel_id", channel.ID,
 				"order_no", result.OrderNo,
 				"provider_ref", result.ProviderRef,
 				"status", result.Status,
@@ -163,6 +238,7 @@ func (s *PaymentService) handleWebhookViaRegistry(
 			return nil, result.Status, nil
 		}
 		log.Warnw("payment_webhook_payment_lookup_failed",
+			"channel_id", channel.ID,
 			"order_no", result.OrderNo,
 			"provider_ref", result.ProviderRef,
 			"status", result.Status,
@@ -190,6 +266,7 @@ func (s *PaymentService) handleWebhookViaRegistry(
 	updated, err := s.HandleCallback(callbackInput)
 	if err != nil {
 		log.Errorw("payment_webhook_callback_apply_failed",
+			"channel_id", channel.ID,
 			"payment_id", payment.ID,
 			"order_no", result.OrderNo,
 			"provider_ref", result.ProviderRef,
@@ -199,12 +276,28 @@ func (s *PaymentService) handleWebhookViaRegistry(
 		return nil, result.Status, err
 	}
 	log.Infow("payment_webhook_processed",
+		"channel_id", channel.ID,
 		"payment_id", updated.ID,
 		"order_no", result.OrderNo,
 		"provider_ref", result.ProviderRef,
 		"status", updated.Status,
 	)
 	return updated, result.Status, nil
+}
+
+// supportsBlindWebhookCandidateMatching 标识哪些 channel_type 的 webhook 验签
+// 具备"用任意 channel 的 config 试错即可确认归属"的能力。
+//
+// 微信(api_v3_key + AES-GCM auth tag)和 stripe(endpoint_secret + HMAC)
+// 都满足:错配的密钥会在解密/验签阶段失败,正确的密钥才能成功;
+// paypal 的 webhook 验签依赖 webhook_id 字段语义,无法盲匹配。
+func supportsBlindWebhookCandidateMatching(channelType string) bool {
+	switch strings.ToLower(strings.TrimSpace(channelType)) {
+	case constants.PaymentChannelTypeWechat, constants.PaymentChannelTypeStripe:
+		return true
+	default:
+		return false
+	}
 }
 
 // findWebhookPayment 通过 webhook result 反查 payment。
@@ -247,5 +340,3 @@ func (s *PaymentService) HandleStripeWebhook(input WebhookCallbackInput) (*model
 		constants.PaymentChannelTypeStripe,
 	)
 }
-
-
