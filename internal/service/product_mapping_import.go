@@ -20,10 +20,15 @@ import (
 
 // ImportUpstreamProduct 从上游导入商品（克隆为本地商品 + 建立映射）
 func (s *ProductMappingService) ImportUpstreamProduct(connectionID uint, upstreamProductID uint, categoryID uint, slug string) (*models.ProductMapping, error) {
-	if err := validateProductCategoryAssignment(s.categoryRepo, categoryID, 0); err != nil {
-		return nil, err
-	}
+	return s.importUpstreamProduct(connectionID, upstreamProductID, categoryID, slug, false)
+}
 
+// ImportUpstreamProductWithAutoCategory 从上游导入商品，并按上游分类自动创建/匹配本地分类。
+func (s *ProductMappingService) ImportUpstreamProductWithAutoCategory(connectionID uint, upstreamProductID uint, categoryID uint, slug string, autoCreateCategory bool) (*models.ProductMapping, error) {
+	return s.importUpstreamProduct(connectionID, upstreamProductID, categoryID, slug, autoCreateCategory)
+}
+
+func (s *ProductMappingService) importUpstreamProduct(connectionID uint, upstreamProductID uint, categoryID uint, slug string, autoCreateCategory bool) (*models.ProductMapping, error) {
 	// 检查是否已存在映射
 	existing, err := s.mappingRepo.GetByConnectionAndUpstreamID(connectionID, upstreamProductID)
 	if err != nil {
@@ -66,6 +71,17 @@ func (s *ProductMappingService) ImportUpstreamProduct(connectionID uint, upstrea
 	// 新版上游对下架商品返回 200 + is_active=false → 同样禁止导入
 	if !upProduct.IsActive {
 		return nil, ErrUpstreamProductNotFound
+	}
+
+	if autoCreateCategory && categoryID == 0 && upProduct.CategoryID > 0 {
+		category, createErr := s.resolveLocalCategoryFromUpstream(ctx, adapter, upProduct.CategoryID)
+		if createErr != nil {
+			return nil, fmt.Errorf("auto create category: %w", createErr)
+		}
+		categoryID = category.ID
+	}
+	if err := validateProductCategoryAssignment(s.categoryRepo, categoryID, 0); err != nil {
+		return nil, err
 	}
 
 	// 下载图片到本地
@@ -214,6 +230,18 @@ func (s *ProductMappingService) ImportUpstreamProduct(connectionID uint, upstrea
 	}
 
 	return mapping, nil
+}
+
+func (s *ProductMappingService) resolveLocalCategoryFromUpstream(ctx context.Context, adapter upstream.Adapter, upstreamCategoryID uint) (*models.Category, error) {
+	catResult, err := adapter.ListCategories(ctx)
+	if err != nil {
+		return nil, err
+	}
+	catMap := make(map[uint]upstream.UpstreamCategory, len(catResult.Categories))
+	for _, c := range catResult.Categories {
+		catMap[c.ID] = c
+	}
+	return s.findOrCreateCategoryFromUpstream(upstreamCategoryID, catMap)
 }
 
 func createSKUMappingsWithRepo(

@@ -69,10 +69,11 @@ func (h *Handler) GetProductMapping(c *gin.Context) {
 
 // ImportUpstreamProductRequest 导入上游商品请求
 type ImportUpstreamProductRequest struct {
-	ConnectionID      uint   `json:"connection_id" binding:"required"`
-	UpstreamProductID uint   `json:"upstream_product_id" binding:"required"`
-	CategoryID        uint   `json:"category_id"`
-	Slug              string `json:"slug"`
+	ConnectionID       uint   `json:"connection_id" binding:"required"`
+	UpstreamProductID  uint   `json:"upstream_product_id" binding:"required"`
+	CategoryID         uint   `json:"category_id"`
+	Slug               string `json:"slug"`
+	AutoCreateCategory bool   `json:"auto_create_category"`
 }
 
 // ImportUpstreamProduct 导入上游商品
@@ -83,11 +84,12 @@ func (h *Handler) ImportUpstreamProduct(c *gin.Context) {
 		return
 	}
 
-	mapping, err := h.ProductMappingService.ImportUpstreamProduct(
+	mapping, err := h.ProductMappingService.ImportUpstreamProductWithAutoCategory(
 		req.ConnectionID,
 		req.UpstreamProductID,
 		req.CategoryID,
 		req.Slug,
+		req.AutoCreateCategory,
 	)
 	if err != nil {
 		if errors.Is(err, service.ErrMappingAlreadyExists) {
@@ -122,6 +124,7 @@ type BatchImportUpstreamProductRequest struct {
 	ConnectionID       uint   `json:"connection_id" binding:"required"`
 	UpstreamProductIDs []uint `json:"upstream_product_ids" binding:"required,min=1"`
 	CategoryID         uint   `json:"category_id"`
+	AutoCreateCategory bool   `json:"auto_create_category"`
 }
 
 // BatchImportUpstreamProductResult 单个商品导入结果
@@ -146,11 +149,12 @@ func (h *Handler) BatchImportUpstreamProducts(c *gin.Context) {
 		result := BatchImportUpstreamProductResult{
 			UpstreamProductID: upstreamProductID,
 		}
-		_, err := h.ProductMappingService.ImportUpstreamProduct(
+		_, err := h.ProductMappingService.ImportUpstreamProductWithAutoCategory(
 			req.ConnectionID,
 			upstreamProductID,
 			req.CategoryID,
 			"", // auto-generate slug
+			req.AutoCreateCategory,
 		)
 		if err != nil {
 			result.Error = err.Error()

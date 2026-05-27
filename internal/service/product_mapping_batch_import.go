@@ -162,6 +162,20 @@ func (s *ProductMappingService) findOrCreateLocalCategory(slug string, nameJSON 
 		return existing, nil
 	}
 
+	deleted, err := s.categoryRepo.GetBySlugUnscoped(slug)
+	if err != nil {
+		return nil, err
+	}
+	if deleted != nil {
+		deleted.ParentID = parentID
+		deleted.NameJSON = nameJSON
+		deleted.IsActive = true
+		if err := s.categoryRepo.Restore(deleted); err != nil {
+			return nil, err
+		}
+		return deleted, nil
+	}
+
 	// 不存在，创建新分类
 	if s.categoryService == nil {
 		return nil, fmt.Errorf("category service not available")

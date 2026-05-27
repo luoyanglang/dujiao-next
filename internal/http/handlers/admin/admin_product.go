@@ -340,6 +340,10 @@ func (h *Handler) QuickUpdateProduct(c *gin.Context) {
 			shared.RespondError(c, response.CodeNotFound, "error.product_not_found", nil)
 			return
 		}
+		if errors.Is(err, service.ErrProductCategoryInvalid) {
+			shared.RespondError(c, response.CodeBadRequest, "error.product_category_invalid", nil)
+			return
+		}
 		shared.RespondError(c, response.CodeInternal, "error.product_update_failed", err)
 		return
 	}
@@ -451,6 +455,29 @@ type BatchProductCategoryRequest struct {
 	CategoryID uint   `json:"category_id"`
 }
 
+type batchProductFailureItem struct {
+	ID        uint   `json:"id"`
+	ErrorCode string `json:"error_code"`
+	Message   string `json:"message"`
+}
+
+func productBatchFailureFromError(id uint, err error) batchProductFailureItem {
+	item := batchProductFailureItem{
+		ID:        id,
+		ErrorCode: "product_update_failed",
+		Message:   "product update failed",
+	}
+	switch {
+	case errors.Is(err, service.ErrProductCategoryInvalid):
+		item.ErrorCode = "product_category_invalid"
+		item.Message = "Please select a valid category before activating this product."
+	case errors.Is(err, service.ErrNotFound):
+		item.ErrorCode = "product_not_found"
+		item.Message = "Product not found."
+	}
+	return item
+}
+
 // BatchUpdateProductStatus 批量上架/下架
 func (h *Handler) BatchUpdateProductStatus(c *gin.Context) {
 	var req BatchProductStatusRequest
@@ -459,13 +486,16 @@ func (h *Handler) BatchUpdateProductStatus(c *gin.Context) {
 		return
 	}
 	successCount := 0
+	failedItems := make([]batchProductFailureItem, 0)
 	for _, id := range req.IDs {
 		_, err := h.ProductService.QuickUpdate(strconv.FormatUint(uint64(id), 10), map[string]interface{}{"is_active": req.IsActive})
 		if err == nil {
 			successCount++
+		} else {
+			failedItems = append(failedItems, productBatchFailureFromError(id, err))
 		}
 	}
-	response.Success(c, gin.H{"total": len(req.IDs), "success_count": successCount})
+	response.Success(c, gin.H{"total": len(req.IDs), "success_count": successCount, "failed_items": failedItems})
 }
 
 // BatchUpdateProductCategory 批量修改分类
