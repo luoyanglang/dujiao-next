@@ -8,6 +8,7 @@ import (
 	"github.com/dujiao-next/internal/constants"
 	"github.com/dujiao-next/internal/models"
 
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
 
@@ -18,6 +19,9 @@ type UserRepository interface {
 	ListByIDs(ids []uint) ([]models.User, error)
 	Create(user *models.User) error
 	Update(user *models.User) error
+	IncrementTotalRecharged(userID uint, amount decimal.Decimal) error
+	IncrementTotalSpent(userID uint, amount decimal.Decimal) error
+	UpdateMemberLevelIfCurrent(userID, currentLevelID, nextLevelID uint) (int64, error)
 	List(filter UserListFilter) ([]models.User, int64, error)
 	BatchUpdateStatus(userIDs []uint, status string) error
 	AssignDefaultMemberLevel(defaultLevelID uint) (int64, error)
@@ -83,6 +87,46 @@ func (r *GormUserRepository) Create(user *models.User) error {
 // Update 更新用户
 func (r *GormUserRepository) Update(user *models.User) error {
 	return r.db.Save(user).Error
+}
+
+// IncrementTotalRecharged 原子累加用户累计充值金额。
+func (r *GormUserRepository) IncrementTotalRecharged(userID uint, amount decimal.Decimal) error {
+	return r.incrementMoneyColumn(userID, "total_recharged", amount)
+}
+
+// IncrementTotalSpent 原子累加用户累计消费金额。
+func (r *GormUserRepository) IncrementTotalSpent(userID uint, amount decimal.Decimal) error {
+	return r.incrementMoneyColumn(userID, "total_spent", amount)
+}
+
+func (r *GormUserRepository) incrementMoneyColumn(userID uint, column string, amount decimal.Decimal) error {
+	if userID == 0 {
+		return nil
+	}
+	amount = amount.Round(2)
+	if amount.LessThanOrEqual(decimal.Zero) {
+		return nil
+	}
+	return r.db.Model(&models.User{}).
+		Where("id = ?", userID).
+		Updates(map[string]interface{}{
+			column:       gorm.Expr(column+" + ?", models.NewMoneyFromDecimal(amount)),
+			"updated_at": time.Now(),
+		}).Error
+}
+
+// UpdateMemberLevelIfCurrent 仅在用户当前等级未被其他流程改变时更新会员等级。
+func (r *GormUserRepository) UpdateMemberLevelIfCurrent(userID, currentLevelID, nextLevelID uint) (int64, error) {
+	if userID == 0 || currentLevelID == nextLevelID {
+		return 0, nil
+	}
+	result := r.db.Model(&models.User{}).
+		Where("id = ? AND member_level_id = ?", userID, currentLevelID).
+		Updates(map[string]interface{}{
+			"member_level_id": nextLevelID,
+			"updated_at":      time.Now(),
+		})
+	return result.RowsAffected, result.Error
 }
 
 // List 用户列表

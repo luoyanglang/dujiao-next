@@ -79,6 +79,8 @@ func (h *Handler) CreateMemberLevel(c *gin.Context) {
 		switch {
 		case errors.Is(err, service.ErrMemberLevelSlugExists):
 			shared.RespondError(c, response.CodeBadRequest, "error.member_level_slug_exists", nil)
+		case errors.Is(err, service.ErrMemberLevelSortOrderUsed):
+			shared.RespondError(c, response.CodeBadRequest, "error.member_level_sort_order_used", nil)
 		default:
 			shared.RespondError(c, response.CodeInternal, "error.member_level_create_failed", err)
 		}
@@ -128,6 +130,8 @@ func (h *Handler) UpdateMemberLevel(c *gin.Context) {
 		switch {
 		case errors.Is(err, service.ErrMemberLevelSlugExists):
 			shared.RespondError(c, response.CodeBadRequest, "error.member_level_slug_exists", nil)
+		case errors.Is(err, service.ErrMemberLevelSortOrderUsed):
+			shared.RespondError(c, response.CodeBadRequest, "error.member_level_sort_order_used", nil)
 		case errors.Is(err, service.ErrMemberLevelNotFound):
 			shared.RespondError(c, response.CodeNotFound, "error.member_level_not_found", nil)
 		default:
