@@ -275,3 +275,62 @@ func TestBuildOrderResultMatchesWholesaleByProductQuantityAcrossSKUs(t *testing.
 		}
 	}
 }
+
+// TestBuildOrderResultSkipsWholesaleForCheaperSKU 验证同商品多 SKU 底价不同时的语义：
+// 批发门槛按商品总量判定（共享门槛），但批发单价只对「底价高于档位价」的 SKU 生效；
+// 底价已低于档位价的 SKU 不会被批发价拉高，各行只计算自己的优惠。
+func TestBuildOrderResultSkipsWholesaleForCheaperSKU(t *testing.T) {
+	wholesalePrices := models.WholesalePriceTiers{
+		{MinQuantity: 10, UnitPrice: models.NewMoneyFromDecimal(decimal.NewFromInt(80))},
+	}
+	// 默认 SKU 底价 100（高于档位价 80），新增 SKU 底价 50（低于档位价 80）。
+	fixture := setupWholesaleOrderFixture(t, "wholesale_skip_cheaper_sku", wholesalePrices, nil, nil)
+
+	cheaperSKU := models.ProductSKU{
+		ProductID:   fixture.product.ID,
+		SKUCode:     "SKU-CHEAP",
+		PriceAmount: models.NewMoneyFromDecimal(decimal.NewFromInt(50)),
+		IsActive:    true,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+	if err := fixture.db.Create(&cheaperSKU).Error; err != nil {
+		t.Fatalf("create cheaper sku failed: %v", err)
+	}
+
+	// 6 + 6 = 12 ≥ 10，命中门槛。
+	result, err := fixture.svc.buildOrderResult(orderCreateParams{
+		Items: []CreateOrderItem{
+			{ProductID: fixture.product.ID, SKUID: fixture.sku.ID, Quantity: 6},
+			{ProductID: fixture.product.ID, SKUID: cheaperSKU.ID, Quantity: 6},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildOrderResult failed: %v", err)
+	}
+
+	// 原价 = 100*6 + 50*6 = 900；批发优惠仅来自底价 100 的 SKU：(100-80)*6 = 120。
+	if !result.OriginalAmount.Equal(decimal.NewFromInt(900)) {
+		t.Fatalf("expected original amount 900, got %s", result.OriginalAmount.String())
+	}
+	if !result.WholesaleDiscountAmount.Equal(decimal.NewFromInt(120)) {
+		t.Fatalf("expected wholesale discount 120, got %s", result.WholesaleDiscountAmount.String())
+	}
+	// 实付 = 80*6 + 50*6 = 780。
+	if !result.TotalAmount.Equal(decimal.NewFromInt(780)) {
+		t.Fatalf("expected total 780, got %s", result.TotalAmount.String())
+	}
+
+	bySKU := make(map[uint]models.OrderItem, len(result.Plans))
+	for _, plan := range result.Plans {
+		bySKU[plan.Item.SKUID] = plan.Item
+	}
+	high := bySKU[fixture.sku.ID]
+	if high.UnitPrice.String() != "80.00" || high.WholesaleDiscount.String() != "120.00" {
+		t.Fatalf("expected high-base SKU to use wholesale 80: unit=%s wholesale=%s", high.UnitPrice.String(), high.WholesaleDiscount.String())
+	}
+	cheap := bySKU[cheaperSKU.ID]
+	if cheap.UnitPrice.String() != "50.00" || cheap.WholesaleDiscount.String() != "0.00" {
+		t.Fatalf("expected cheaper SKU to keep base 50 without wholesale: unit=%s wholesale=%s", cheap.UnitPrice.String(), cheap.WholesaleDiscount.String())
+	}
+}

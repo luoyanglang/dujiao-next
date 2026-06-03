@@ -128,43 +128,45 @@ type WholesalePriceRequest struct {
 
 // CreateProductRequest 创建商品请求
 type CreateProductRequest struct {
-	CategoryID          uint                    `json:"category_id" binding:"required"`
-	Slug                string                  `json:"slug" binding:"required"`
-	SeoMetaJSON         map[string]interface{}  `json:"seo_meta"`
-	TitleJSON           map[string]interface{}  `json:"title" binding:"required"`
-	DescriptionJSON     map[string]interface{}  `json:"description"`
-	ContentJSON         map[string]interface{}  `json:"content"`
-	InstructionsJSON    map[string]interface{}  `json:"instructions"`
-	ManualFormSchema    map[string]interface{}  `json:"manual_form_schema"`
-	PriceAmount         float64                 `json:"price_amount" binding:"required"`
-	CostPriceAmount     float64                 `json:"cost_price_amount"`
-	WholesalePrices     []WholesalePriceRequest `json:"wholesale_prices"`
-	Images              []string                `json:"images"`
-	Tags                []string                `json:"tags"`
-	PurchaseType        string                  `json:"purchase_type"`
-	MinPurchaseQuantity *int                    `json:"min_purchase_quantity"`
-	MaxPurchaseQuantity *int                    `json:"max_purchase_quantity"`
-	FulfillmentType     string                  `json:"fulfillment_type"`
-	ManualStockTotal    *int                    `json:"manual_stock_total"`
-	SKUs                []ProductSKURequest     `json:"skus"`
-	PaymentChannelIDs   []uint                  `json:"payment_channel_ids"`
-	IsAffiliateEnabled  *bool                   `json:"is_affiliate_enabled"`
-	IsActive            *bool                   `json:"is_active"`
-	SortOrder           int                     `json:"sort_order"`
+	CategoryID          uint                     `json:"category_id" binding:"required"`
+	Slug                string                   `json:"slug" binding:"required"`
+	SeoMetaJSON         map[string]interface{}   `json:"seo_meta"`
+	TitleJSON           map[string]interface{}   `json:"title" binding:"required"`
+	DescriptionJSON     map[string]interface{}   `json:"description"`
+	ContentJSON         map[string]interface{}   `json:"content"`
+	InstructionsJSON    map[string]interface{}   `json:"instructions"`
+	ManualFormSchema    map[string]interface{}   `json:"manual_form_schema"`
+	PriceAmount         float64                  `json:"price_amount" binding:"required"`
+	CostPriceAmount     float64                  `json:"cost_price_amount"`
+	WholesalePrices     *[]WholesalePriceRequest `json:"wholesale_prices"`
+	Images              []string                 `json:"images"`
+	Tags                []string                 `json:"tags"`
+	PurchaseType        string                   `json:"purchase_type"`
+	MinPurchaseQuantity *int                     `json:"min_purchase_quantity"`
+	MaxPurchaseQuantity *int                     `json:"max_purchase_quantity"`
+	FulfillmentType     string                   `json:"fulfillment_type"`
+	ManualStockTotal    *int                     `json:"manual_stock_total"`
+	SKUs                []ProductSKURequest      `json:"skus"`
+	PaymentChannelIDs   []uint                   `json:"payment_channel_ids"`
+	IsAffiliateEnabled  *bool                    `json:"is_affiliate_enabled"`
+	IsActive            *bool                    `json:"is_active"`
+	SortOrder           int                      `json:"sort_order"`
 }
 
-func toWholesalePriceInputs(items []WholesalePriceRequest) []service.WholesalePriceInput {
-	if len(items) == 0 {
+// toWholesalePriceInputs 透传「是否提供」语义：请求未携带 wholesale_prices 时返回 nil
+// （Update 保留原配置），携带（含空数组）时返回非 nil 指针以整体覆盖。
+func toWholesalePriceInputs(items *[]WholesalePriceRequest) *[]service.WholesalePriceInput {
+	if items == nil {
 		return nil
 	}
-	result := make([]service.WholesalePriceInput, 0, len(items))
-	for _, item := range items {
+	result := make([]service.WholesalePriceInput, 0, len(*items))
+	for _, item := range *items {
 		result = append(result, service.WholesalePriceInput{
 			MinQuantity: item.MinQuantity,
 			UnitPrice:   decimal.NewFromFloat(item.UnitPrice),
 		})
 	}
-	return result
+	return &result
 }
 
 func toProductSKUInputs(items []ProductSKURequest) []service.ProductSKUInput {

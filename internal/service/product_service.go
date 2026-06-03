@@ -113,19 +113,21 @@ type CreateProductInput struct {
 	ManualFormSchemaJSON map[string]interface{}
 	PriceAmount          decimal.Decimal
 	CostPriceAmount      decimal.Decimal
-	WholesalePrices      []WholesalePriceInput
-	Images               []string
-	Tags                 []string
-	PurchaseType         string
-	MinPurchaseQuantity  *int
-	MaxPurchaseQuantity  *int
-	FulfillmentType      string
-	ManualStockTotal     *int
-	SKUs                 []ProductSKUInput
-	PaymentChannelIDs    []uint
-	IsAffiliateEnabled   *bool
-	IsActive             *bool
-	SortOrder            int
+	// WholesalePrices 为可选字段：nil 表示「不修改」（Update 时保留原有批发价），
+	// 非 nil（含空切片）表示以传入内容整体覆盖。Create 时 nil 与空切片等价于无批发价。
+	WholesalePrices     *[]WholesalePriceInput
+	Images              []string
+	Tags                []string
+	PurchaseType        string
+	MinPurchaseQuantity *int
+	MaxPurchaseQuantity *int
+	FulfillmentType     string
+	ManualStockTotal    *int
+	SKUs                []ProductSKUInput
+	PaymentChannelIDs   []uint
+	IsAffiliateEnabled  *bool
+	IsActive            *bool
+	SortOrder           int
 }
 
 type WholesalePriceInput struct {
@@ -285,7 +287,11 @@ func (s *ProductService) Create(input CreateProductInput) (*models.Product, erro
 	}
 
 	costPriceAmount := input.CostPriceAmount.Round(2)
-	wholesalePrices, err := normalizeWholesalePriceInputs(input.WholesalePrices)
+	var wholesaleInputs []WholesalePriceInput
+	if input.WholesalePrices != nil {
+		wholesaleInputs = *input.WholesalePrices
+	}
+	wholesalePrices, err := normalizeWholesalePriceInputs(wholesaleInputs)
 	if err != nil {
 		return nil, err
 	}
@@ -399,11 +405,15 @@ func (s *ProductService) Update(id string, input CreateProductInput) (*models.Pr
 	product.InstructionsJSON = models.JSON(input.InstructionsJSON)
 	product.ManualFormSchemaJSON = models.JSON{}
 	product.PriceAmount = models.NewMoneyFromDecimal(priceAmount)
-	wholesalePrices, err := normalizeWholesalePriceInputs(input.WholesalePrices)
-	if err != nil {
-		return nil, err
+	// 仅当请求显式携带批发价字段时才覆盖，省略字段（nil）保留原有配置，
+	// 避免不关心批发价的局部更新静默清空已配阶梯。
+	if input.WholesalePrices != nil {
+		wholesalePrices, err := normalizeWholesalePriceInputs(*input.WholesalePrices)
+		if err != nil {
+			return nil, err
+		}
+		product.WholesalePrices = wholesalePrices
 	}
-	product.WholesalePrices = wholesalePrices
 	product.SortOrder = input.SortOrder
 	product.Images = models.StringArray(input.Images)
 	product.Tags = models.StringArray(input.Tags)

@@ -1064,3 +1064,72 @@ func TestProductServiceUpdateRejectsInvalidPurchaseLimits(t *testing.T) {
 		t.Fatalf("expected ErrProductPurchaseLimitInvalid on update, got %v", err)
 	}
 }
+
+// TestProductServiceUpdateWholesalePricesOptionalSemantics 验证批发价的可选更新语义：
+// Update 省略 wholesale_prices（nil）时保留原配置；传入空切片时显式清空。
+func TestProductServiceUpdateWholesalePricesOptionalSemantics(t *testing.T) {
+	svc, db := newProductServiceForTest(t)
+	boolPtr := func(v bool) *bool { return &v }
+
+	category := models.Category{
+		Slug:     "wholesale-update-category",
+		NameJSON: models.JSON{"zh-CN": "wholesale-update-category"},
+	}
+	if err := db.Create(&category).Error; err != nil {
+		t.Fatalf("create category failed: %v", err)
+	}
+
+	created, err := svc.Create(CreateProductInput{
+		CategoryID:      category.ID,
+		Slug:            "wholesale-update",
+		TitleJSON:       map[string]interface{}{"zh-CN": "wholesale-update"},
+		PriceAmount:     decimal.NewFromInt(100),
+		PurchaseType:    constants.ProductPurchaseMember,
+		FulfillmentType: constants.FulfillmentTypeAuto,
+		WholesalePrices: &[]WholesalePriceInput{
+			{MinQuantity: 5, UnitPrice: decimal.NewFromInt(80)},
+		},
+		IsActive: boolPtr(true),
+	})
+	if err != nil {
+		t.Fatalf("create product failed: %v", err)
+	}
+	if len(created.WholesalePrices) != 1 {
+		t.Fatalf("expected 1 wholesale tier on create, got %+v", created.WholesalePrices)
+	}
+
+	idStr := strconv.FormatUint(uint64(created.ID), 10)
+	baseUpdate := func() CreateProductInput {
+		return CreateProductInput{
+			CategoryID:      category.ID,
+			Slug:            created.Slug,
+			TitleJSON:       map[string]interface{}{"zh-CN": "wholesale-update"},
+			PriceAmount:     decimal.NewFromInt(100),
+			PurchaseType:    constants.ProductPurchaseMember,
+			FulfillmentType: constants.FulfillmentTypeAuto,
+			IsActive:        boolPtr(true),
+		}
+	}
+
+	// 省略字段（nil）：应保留原批发价。
+	keep := baseUpdate()
+	keep.WholesalePrices = nil
+	updated, err := svc.Update(idStr, keep)
+	if err != nil {
+		t.Fatalf("update without wholesale prices failed: %v", err)
+	}
+	if len(updated.WholesalePrices) != 1 || updated.WholesalePrices[0].UnitPrice.String() != "80.00" {
+		t.Fatalf("expected wholesale prices kept when omitted, got %+v", updated.WholesalePrices)
+	}
+
+	// 传入空切片：显式清空。
+	clear := baseUpdate()
+	clear.WholesalePrices = &[]WholesalePriceInput{}
+	cleared, err := svc.Update(idStr, clear)
+	if err != nil {
+		t.Fatalf("update with empty wholesale prices failed: %v", err)
+	}
+	if len(cleared.WholesalePrices) != 0 {
+		t.Fatalf("expected wholesale prices cleared, got %+v", cleared.WholesalePrices)
+	}
+}

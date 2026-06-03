@@ -57,6 +57,11 @@ func ResolveWholesaleUnitPriceWithMatchQuantity(product *models.Product, baseUni
 	return resolveWholesaleUnitPrice(product, baseUnitPrice, matchQuantity, quantity)
 }
 
+// resolveWholesaleUnitPrice 解析单个订单行的批发成交价。
+// matchQuantity 用于判定档位（多 SKU 时为同商品总购买量，故门槛跨 SKU 共享），
+// quantity 为当前行数量、仅用于计算本行优惠金额。
+// 批发档为商品级扁平单价：仅当档位价低于该 SKU 底价时才生效，
+// 因此底价已低于档位价的 SKU 不会被批发价拉高，各行独立计算自身优惠。
 func resolveWholesaleUnitPrice(product *models.Product, baseUnitPrice decimal.Decimal, matchQuantity, quantity int) (unitPrice decimal.Decimal, discount decimal.Decimal, matched bool) {
 	base := baseUnitPrice.Round(2)
 	if product == nil || matchQuantity <= 0 || quantity <= 0 || base.LessThanOrEqual(decimal.Zero) || len(product.WholesalePrices) == 0 {
