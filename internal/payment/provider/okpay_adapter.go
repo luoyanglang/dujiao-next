@@ -82,12 +82,18 @@ func (a *okpayAdapter) CreatePayment(ctx context.Context, raw models.JSON, input
 	originalAmount := input.Amount.Decimal.String()
 	originalCurrency := input.Currency
 
+	returnURL := strings.TrimSpace(input.ReturnURL)
+	if returnURL == "" {
+		returnURL = strings.TrimSpace(cfg.ReturnURL)
+	}
+	returnURL = appendQueryParams(returnURL, input.ReturnURLQuery)
+
 	// 注意 okpay CreateInput 字段命名独特
 	native := okpay.CreateInput{
 		UniqueID:    input.OrderNo,
 		Name:        input.Subject,
 		Amount:      originalAmount,
-		ReturnURL:   input.ReturnURL,
+		ReturnURL:   returnURL,
 		CallbackURL: cfg.CallbackURL, // 从 cfg 取（对齐现有 service 逻辑）
 		Coin:        cfg.Coin,
 		Status:      cfg.Status,
