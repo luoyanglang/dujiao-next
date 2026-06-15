@@ -47,19 +47,41 @@ type publicProductView struct {
 	IsSoldOut            bool
 }
 
+type publicStockDisplayView struct {
+	mode           string
+	status         string
+	display        string
+	rangeMin       *int
+	rangeMax       *int
+	quantityHidden bool
+}
+
 // toProductResp 将内部计算结构转换为公共 DTO
 func (v *publicProductView) toProductResp() dto.ProductResp {
+	mode := normalizePublicStockDisplayMode(v.Product.StockDisplayMode)
+	productQuantity := v.productStockQuantity()
+	productDisplay := buildPublicStockDisplay(mode, v.StockStatus, productQuantity)
+
 	skus := make([]dto.SKUResp, 0, len(v.PublicSKUs))
 	for _, sv := range v.PublicSKUs {
+		skuStatus, skuQuantity := v.skuStockState(sv)
+		skuDisplay := buildPublicStockDisplay(mode, skuStatus, skuQuantity)
 		skus = append(skus, dto.SKUResp{
 			ID:                   sv.ID,
 			SKUCode:              sv.SKUCode,
 			SpecValues:           sv.SpecValuesJSON,
 			PriceAmount:          sv.PriceAmount,
-			ManualStockTotal:     sv.ManualStockTotal,
-			ManualStockSold:      sv.ManualStockSold,
-			AutoStockAvailable:   sv.AutoStockAvailable,
-			UpstreamStock:        sv.UpstreamStock,
+			ManualStockTotal:     maskPublicStockInt(mode, sv.ManualStockTotal),
+			ManualStockSold:      maskPublicStockSold(mode, sv.ManualStockSold),
+			AutoStockAvailable:   maskPublicStockInt64(mode, sv.AutoStockAvailable),
+			UpstreamStock:        maskPublicStockInt(mode, sv.UpstreamStock),
+			StockStatus:          skuStatus,
+			StockDisplayMode:     skuDisplay.mode,
+			StockDisplay:         skuDisplay.display,
+			StockRangeMin:        skuDisplay.rangeMin,
+			StockRangeMax:        skuDisplay.rangeMax,
+			StockQuantityHidden:  skuDisplay.quantityHidden,
+			IsSoldOut:            skuStatus == constants.ProductStockStatusOutOfStock,
 			IsActive:             sv.IsActive,
 			PromotionPriceAmount: sv.PromotionPriceAmount,
 			MemberPriceAmount:    sv.MemberPriceAmount,
@@ -81,10 +103,15 @@ func (v *publicProductView) toProductResp() dto.ProductResp {
 		PurchaseType:         v.Product.PurchaseType,
 		MinPurchaseQuantity:  v.Product.MinPurchaseQuantity,
 		MaxPurchaseQuantity:  v.Product.MaxPurchaseQuantity,
+		StockDisplayMode:     productDisplay.mode,
+		StockDisplay:         productDisplay.display,
+		StockRangeMin:        productDisplay.rangeMin,
+		StockRangeMax:        productDisplay.rangeMax,
+		StockQuantityHidden:  productDisplay.quantityHidden,
 		FulfillmentType:      v.Product.FulfillmentType,
 		ManualFormSchema:     v.Product.ManualFormSchemaJSON,
-		ManualStockAvailable: v.ManualStockAvailable,
-		AutoStockAvailable:   v.AutoStockAvailable,
+		ManualStockAvailable: maskPublicStockInt(mode, v.ManualStockAvailable),
+		AutoStockAvailable:   maskPublicStockInt64(mode, v.AutoStockAvailable),
 		StockStatus:          v.StockStatus,
 		IsSoldOut:            v.IsSoldOut,
 		PaymentChannelIDs:    service.DecodeChannelIDs(v.Product.PaymentChannelIDs),
@@ -98,6 +125,149 @@ func (v *publicProductView) toProductResp() dto.ProductResp {
 		MemberPrices:         v.MemberPrices,
 	}
 	return resp
+}
+
+func normalizePublicStockDisplayMode(raw string) string {
+	switch strings.TrimSpace(raw) {
+	case constants.ProductStockDisplayStatus:
+		return constants.ProductStockDisplayStatus
+	case constants.ProductStockDisplayRange:
+		return constants.ProductStockDisplayRange
+	case constants.ProductStockDisplayHidden:
+		return constants.ProductStockDisplayHidden
+	default:
+		return constants.ProductStockDisplayExact
+	}
+}
+
+func buildPublicStockDisplay(mode, status string, quantity int64) publicStockDisplayView {
+	normalizedMode := normalizePublicStockDisplayMode(mode)
+	normalizedStatus := normalizePublicStockStatus(status, quantity)
+	view := publicStockDisplayView{
+		mode:           normalizedMode,
+		status:         normalizedStatus,
+		display:        normalizedStatus,
+		quantityHidden: normalizedMode != constants.ProductStockDisplayExact,
+	}
+
+	switch normalizedMode {
+	case constants.ProductStockDisplayRange:
+		if normalizedStatus == constants.ProductStockStatusInStock || normalizedStatus == constants.ProductStockStatusLowStock {
+			view.display, view.rangeMin, view.rangeMax = publicStockRange(quantity)
+		}
+	case constants.ProductStockDisplayHidden:
+		if normalizedStatus == constants.ProductStockStatusInStock || normalizedStatus == constants.ProductStockStatusLowStock {
+			view.display = constants.ProductStockDisplayHidden
+		}
+	case constants.ProductStockDisplayExact:
+		view.quantityHidden = false
+		view.display = constants.ProductStockDisplayExact
+	}
+	return view
+}
+
+func normalizePublicStockStatus(status string, quantity int64) string {
+	switch status {
+	case constants.ProductStockStatusUnlimited:
+		return constants.ProductStockStatusUnlimited
+	case constants.ProductStockStatusOutOfStock:
+		return constants.ProductStockStatusOutOfStock
+	case constants.ProductStockStatusLowStock:
+		return constants.ProductStockStatusLowStock
+	case constants.ProductStockStatusInStock:
+		return constants.ProductStockStatusInStock
+	}
+	switch {
+	case quantity == int64(constants.ManualStockUnlimited):
+		return constants.ProductStockStatusUnlimited
+	case quantity <= 0:
+		return constants.ProductStockStatusOutOfStock
+	case quantity <= publicLowStockLimit:
+		return constants.ProductStockStatusLowStock
+	default:
+		return constants.ProductStockStatusInStock
+	}
+}
+
+func publicStockRange(quantity int64) (string, *int, *int) {
+	switch {
+	case quantity <= 5:
+		min, max := 1, 5
+		return constants.ProductStockDisplayRange1To5, &min, &max
+	case quantity <= 20:
+		min, max := 6, 20
+		return constants.ProductStockDisplayRange6To20, &min, &max
+	case quantity <= 50:
+		min, max := 21, 50
+		return constants.ProductStockDisplayRange21To50, &min, &max
+	case quantity <= 100:
+		min, max := 51, 100
+		return constants.ProductStockDisplayRange51To100, &min, &max
+	default:
+		min := 100
+		return constants.ProductStockDisplayRange100Plus, &min, nil
+	}
+}
+
+func maskPublicStockInt(mode string, value int) int {
+	if normalizePublicStockDisplayMode(mode) == constants.ProductStockDisplayExact {
+		return value
+	}
+	switch {
+	case value == constants.ManualStockUnlimited:
+		return constants.ManualStockUnlimited
+	case value <= 0:
+		return 0
+	default:
+		return 1
+	}
+}
+
+func maskPublicStockInt64(mode string, value int64) int64 {
+	if normalizePublicStockDisplayMode(mode) == constants.ProductStockDisplayExact {
+		return value
+	}
+	switch {
+	case value == int64(constants.ManualStockUnlimited):
+		return int64(constants.ManualStockUnlimited)
+	case value <= 0:
+		return 0
+	default:
+		return 1
+	}
+}
+
+func maskPublicStockSold(mode string, value int) int {
+	if normalizePublicStockDisplayMode(mode) == constants.ProductStockDisplayExact {
+		return value
+	}
+	return 0
+}
+
+func (v *publicProductView) productStockQuantity() int64 {
+	if v.StockStatus == constants.ProductStockStatusUnlimited {
+		return int64(constants.ManualStockUnlimited)
+	}
+	fulfillmentType := strings.TrimSpace(v.Product.FulfillmentType)
+	if fulfillmentType == constants.FulfillmentTypeAuto {
+		return v.AutoStockAvailable
+	}
+	return int64(v.ManualStockAvailable)
+}
+
+func (v *publicProductView) skuStockState(sv publicSKUView) (string, int64) {
+	fulfillmentType := strings.TrimSpace(v.Product.FulfillmentType)
+	if fulfillmentType == "" {
+		fulfillmentType = constants.FulfillmentTypeManual
+	}
+	var quantity int64
+	if fulfillmentType == constants.FulfillmentTypeAuto {
+		quantity = sv.AutoStockAvailable
+	} else {
+		quantity = int64(sv.ManualStockTotal)
+	}
+	status := normalizePublicStockStatus("", quantity)
+	return status, quantity
 }
 
 // GetConfig 获取全局配置

@@ -204,6 +204,20 @@ const (
 	ProductStockStatusOutOfStock = "out_of_stock"
 )
 
+// 公开库存展示模式与档位常量
+const (
+	ProductStockDisplayExact  = "exact"
+	ProductStockDisplayStatus = "status"
+	ProductStockDisplayRange  = "range"
+	ProductStockDisplayHidden = "hidden"
+
+	ProductStockDisplayRange1To5    = "range_1_5"
+	ProductStockDisplayRange6To20   = "range_6_20"
+	ProductStockDisplayRange21To50  = "range_21_50"
+	ProductStockDisplayRange51To100 = "range_51_100"
+	ProductStockDisplayRange100Plus = "range_100_plus"
+)
+
 // 手动库存常量
 const (
 	ManualStockUnlimited = -1

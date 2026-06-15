@@ -121,6 +121,7 @@ type CreateProductInput struct {
 	PurchaseType        string
 	MinPurchaseQuantity *int
 	MaxPurchaseQuantity *int
+	StockDisplayMode    string
 	FulfillmentType     string
 	ManualStockTotal    *int
 	SKUs                []ProductSKUInput
@@ -285,6 +286,10 @@ func (s *ProductService) Create(input CreateProductInput) (*models.Product, erro
 	if minPurchaseQuantity > 0 && maxPurchaseQuantity > 0 && minPurchaseQuantity > maxPurchaseQuantity {
 		return nil, ErrProductPurchaseLimitInvalid
 	}
+	stockDisplayMode := normalizeStockDisplayMode(input.StockDisplayMode)
+	if stockDisplayMode == "" {
+		return nil, ErrProductStockDisplayInvalid
+	}
 
 	costPriceAmount := input.CostPriceAmount.Round(2)
 	var wholesaleInputs []WholesalePriceInput
@@ -330,6 +335,7 @@ func (s *ProductService) Create(input CreateProductInput) (*models.Product, erro
 		PurchaseType:         purchaseType,
 		MinPurchaseQuantity:  minPurchaseQuantity,
 		MaxPurchaseQuantity:  maxPurchaseQuantity,
+		StockDisplayMode:     stockDisplayMode,
 		FulfillmentType:      fulfillmentType,
 		ManualStockTotal:     manualStockTotal,
 		ManualStockLocked:    0,
@@ -446,6 +452,11 @@ func (s *ProductService) Update(id string, input CreateProductInput) (*models.Pr
 	if product.MinPurchaseQuantity > 0 && product.MaxPurchaseQuantity > 0 && product.MinPurchaseQuantity > product.MaxPurchaseQuantity {
 		return nil, ErrProductPurchaseLimitInvalid
 	}
+	stockDisplayMode := normalizeStockDisplayMode(input.StockDisplayMode)
+	if stockDisplayMode == "" {
+		return nil, ErrProductStockDisplayInvalid
+	}
+	product.StockDisplayMode = stockDisplayMode
 	rawFulfillmentType := strings.TrimSpace(input.FulfillmentType)
 	if rawFulfillmentType == "" {
 		rawFulfillmentType = product.FulfillmentType
@@ -900,6 +911,22 @@ func normalizeFulfillmentType(raw string) string {
 		return constants.FulfillmentTypeAuto
 	case constants.FulfillmentTypeUpstream:
 		return constants.FulfillmentTypeUpstream
+	default:
+		return ""
+	}
+}
+
+func normalizeStockDisplayMode(raw string) string {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	switch value {
+	case "", constants.ProductStockDisplayExact:
+		return constants.ProductStockDisplayExact
+	case constants.ProductStockDisplayStatus:
+		return constants.ProductStockDisplayStatus
+	case constants.ProductStockDisplayRange:
+		return constants.ProductStockDisplayRange
+	case constants.ProductStockDisplayHidden:
+		return constants.ProductStockDisplayHidden
 	default:
 		return ""
 	}

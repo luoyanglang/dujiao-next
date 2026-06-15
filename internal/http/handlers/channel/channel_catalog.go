@@ -159,17 +159,22 @@ func (h *Handler) GetProducts(c *gin.Context) {
 	}
 
 	type productItem struct {
-		ID              uint                    `json:"id"`
-		Title           string                  `json:"title"`
-		Summary         string                  `json:"summary"`
-		ImageURL        string                  `json:"image_url"`
-		PriceFrom       string                  `json:"price_from"`
-		MemberPriceFrom string                  `json:"member_price_from,omitempty"`
-		WholesalePrices []channelWholesalePrice `json:"wholesale_prices,omitempty"`
-		Currency        string                  `json:"currency"`
-		StockStatus     string                  `json:"stock_status"`
-		StockCount      int64                   `json:"stock_count"`
-		CategoryName    string                  `json:"category_name"`
+		ID                  uint                    `json:"id"`
+		Title               string                  `json:"title"`
+		Summary             string                  `json:"summary"`
+		ImageURL            string                  `json:"image_url"`
+		PriceFrom           string                  `json:"price_from"`
+		MemberPriceFrom     string                  `json:"member_price_from,omitempty"`
+		WholesalePrices     []channelWholesalePrice `json:"wholesale_prices,omitempty"`
+		Currency            string                  `json:"currency"`
+		StockStatus         string                  `json:"stock_status"`
+		StockCount          int64                   `json:"stock_count"`
+		StockDisplayMode    string                  `json:"stock_display_mode"`
+		StockDisplay        string                  `json:"stock_display"`
+		StockRangeMin       *int                    `json:"stock_range_min"`
+		StockRangeMax       *int                    `json:"stock_range_max"`
+		StockQuantityHidden bool                    `json:"stock_quantity_hidden"`
+		CategoryName        string                  `json:"category_name"`
 	}
 
 	items := make([]productItem, 0, len(products))
@@ -189,17 +194,25 @@ func (h *Handler) GetProducts(c *gin.Context) {
 			ft = eft
 		}
 
+		stockStatus := computeStockStatus(ft, p.AutoStockAvailable, p.ManualStockTotal)
+		stockCount := computeStockCount(ft, p.AutoStockAvailable, p.ManualStockTotal)
+		stockDisplay := buildChannelStockDisplay(p.StockDisplayMode, stockStatus, stockCount)
 		item := productItem{
-			ID:              p.ID,
-			Title:           title,
-			Summary:         summary,
-			ImageURL:        imageURL,
-			PriceFrom:       p.PriceAmount.String(),
-			WholesalePrices: normalizeChannelWholesalePrices(p.WholesalePrices),
-			Currency:        currency,
-			StockStatus:     computeStockStatus(ft, p.AutoStockAvailable, p.ManualStockTotal),
-			StockCount:      computeStockCount(ft, p.AutoStockAvailable, p.ManualStockTotal),
-			CategoryName:    resolveLocalizedJSON(p.Category.NameJSON, locale, defaultLocale),
+			ID:                  p.ID,
+			Title:               title,
+			Summary:             summary,
+			ImageURL:            imageURL,
+			PriceFrom:           p.PriceAmount.String(),
+			WholesalePrices:     normalizeChannelWholesalePrices(p.WholesalePrices),
+			Currency:            currency,
+			StockStatus:         stockStatus,
+			StockCount:          stockCount,
+			StockDisplayMode:    stockDisplay.mode,
+			StockDisplay:        stockDisplay.display,
+			StockRangeMin:       stockDisplay.rangeMin,
+			StockRangeMax:       stockDisplay.rangeMax,
+			StockQuantityHidden: stockDisplay.quantityHidden,
+			CategoryName:        resolveLocalizedJSON(p.Category.NameJSON, locale, defaultLocale),
 		}
 
 		// 计算会员价
@@ -280,13 +293,18 @@ func (h *Handler) GetProductDetail(c *gin.Context) {
 	}
 
 	type skuItem struct {
-		ID          uint   `json:"id"`
-		SKUCode     string `json:"sku_code"`
-		SpecValues  string `json:"spec_values"`
-		Price       string `json:"price"`
-		MemberPrice string `json:"member_price,omitempty"`
-		StockStatus string `json:"stock_status"`
-		StockCount  int64  `json:"stock_count"`
+		ID                  uint   `json:"id"`
+		SKUCode             string `json:"sku_code"`
+		SpecValues          string `json:"spec_values"`
+		Price               string `json:"price"`
+		MemberPrice         string `json:"member_price,omitempty"`
+		StockStatus         string `json:"stock_status"`
+		StockCount          int64  `json:"stock_count"`
+		StockDisplayMode    string `json:"stock_display_mode"`
+		StockDisplay        string `json:"stock_display"`
+		StockRangeMin       *int   `json:"stock_range_min"`
+		StockRangeMax       *int   `json:"stock_range_max"`
+		StockQuantityHidden bool   `json:"stock_quantity_hidden"`
 	}
 
 	skus := make([]skuItem, 0, len(product.SKUs))
@@ -295,13 +313,21 @@ func (h *Handler) GetProductDetail(c *gin.Context) {
 			continue
 		}
 		specValues := resolveLocalizedJSON(sku.SpecValuesJSON, locale, defaultLocale)
+		stockStatus := computeStockStatus(effectiveFT, sku.AutoStockAvailable, sku.ManualStockTotal)
+		stockCount := computeStockCount(effectiveFT, sku.AutoStockAvailable, sku.ManualStockTotal)
+		stockDisplay := buildChannelStockDisplay(product.StockDisplayMode, stockStatus, stockCount)
 		si := skuItem{
-			ID:          sku.ID,
-			SKUCode:     sku.SKUCode,
-			SpecValues:  specValues,
-			Price:       sku.PriceAmount.String(),
-			StockStatus: computeStockStatus(effectiveFT, sku.AutoStockAvailable, sku.ManualStockTotal),
-			StockCount:  computeStockCount(effectiveFT, sku.AutoStockAvailable, sku.ManualStockTotal),
+			ID:                  sku.ID,
+			SKUCode:             sku.SKUCode,
+			SpecValues:          specValues,
+			Price:               sku.PriceAmount.String(),
+			StockStatus:         stockStatus,
+			StockCount:          stockCount,
+			StockDisplayMode:    stockDisplay.mode,
+			StockDisplay:        stockDisplay.display,
+			StockRangeMin:       stockDisplay.rangeMin,
+			StockRangeMax:       stockDisplay.rangeMax,
+			StockQuantityHidden: stockDisplay.quantityHidden,
 		}
 		if memberLevelID > 0 && h.MemberLevelService != nil {
 			memberPrice, _ := h.MemberLevelService.ResolveMemberPrice(memberLevelID, product.ID, sku.ID, sku.PriceAmount.Decimal)
@@ -321,6 +347,9 @@ func (h *Handler) GetProductDetail(c *gin.Context) {
 		}
 	}
 
+	stockStatus := computeStockStatus(effectiveFT, product.AutoStockAvailable, product.ManualStockTotal)
+	stockCount := computeStockCount(effectiveFT, product.AutoStockAvailable, product.ManualStockTotal)
+	stockDisplay := buildChannelStockDisplay(product.StockDisplayMode, stockStatus, stockCount)
 	respondChannelSuccess(c, gin.H{
 		"id":                    product.ID,
 		"title":                 title,
@@ -330,8 +359,13 @@ func (h *Handler) GetProductDetail(c *gin.Context) {
 		"member_price_from":     memberPriceFrom,
 		"wholesale_prices":      normalizeChannelWholesalePrices(product.WholesalePrices),
 		"currency":              currency,
-		"stock_status":          computeStockStatus(effectiveFT, product.AutoStockAvailable, product.ManualStockTotal),
-		"stock_count":           computeStockCount(effectiveFT, product.AutoStockAvailable, product.ManualStockTotal),
+		"stock_status":          stockStatus,
+		"stock_count":           stockCount,
+		"stock_display_mode":    stockDisplay.mode,
+		"stock_display":         stockDisplay.display,
+		"stock_range_min":       stockDisplay.rangeMin,
+		"stock_range_max":       stockDisplay.rangeMax,
+		"stock_quantity_hidden": stockDisplay.quantityHidden,
 		"category_name":         resolveLocalizedJSON(product.Category.NameJSON, locale, defaultLocale),
 		"fulfillment_type":      effectiveFT,
 		"min_purchase_quantity": normalizeChannelMinPurchaseQuantity(product.MinPurchaseQuantity),
@@ -492,6 +526,93 @@ func normalizeChannelMinPurchaseQuantity(value int) int {
 		return 0
 	}
 	return value
+}
+
+type channelStockDisplayView struct {
+	mode           string
+	display        string
+	rangeMin       *int
+	rangeMax       *int
+	quantityHidden bool
+}
+
+func normalizeChannelStockDisplayMode(raw string) string {
+	switch strings.TrimSpace(raw) {
+	case constants.ProductStockDisplayStatus:
+		return constants.ProductStockDisplayStatus
+	case constants.ProductStockDisplayRange:
+		return constants.ProductStockDisplayRange
+	case constants.ProductStockDisplayHidden:
+		return constants.ProductStockDisplayHidden
+	default:
+		return constants.ProductStockDisplayExact
+	}
+}
+
+func buildChannelStockDisplay(mode, status string, quantity int64) channelStockDisplayView {
+	normalizedMode := normalizeChannelStockDisplayMode(mode)
+	normalizedStatus := normalizeChannelStockDisplayStatus(status, quantity)
+	view := channelStockDisplayView{
+		mode:           normalizedMode,
+		display:        normalizedStatus,
+		quantityHidden: normalizedMode != constants.ProductStockDisplayExact,
+	}
+
+	switch normalizedMode {
+	case constants.ProductStockDisplayRange:
+		if normalizedStatus == constants.ProductStockStatusInStock || normalizedStatus == constants.ProductStockStatusLowStock {
+			view.display, view.rangeMin, view.rangeMax = channelStockRange(quantity)
+		}
+	case constants.ProductStockDisplayHidden:
+		if normalizedStatus == constants.ProductStockStatusInStock || normalizedStatus == constants.ProductStockStatusLowStock {
+			view.display = constants.ProductStockDisplayHidden
+		}
+	case constants.ProductStockDisplayExact:
+		view.quantityHidden = false
+		view.display = constants.ProductStockDisplayExact
+	}
+	return view
+}
+
+func normalizeChannelStockDisplayStatus(status string, quantity int64) string {
+	if quantity < 0 {
+		return constants.ProductStockStatusUnlimited
+	}
+	switch status {
+	case constants.ProductStockStatusOutOfStock:
+		return constants.ProductStockStatusOutOfStock
+	case constants.ProductStockStatusLowStock:
+		return constants.ProductStockStatusLowStock
+	case constants.ProductStockStatusInStock:
+		return constants.ProductStockStatusInStock
+	}
+	if quantity <= 0 {
+		return constants.ProductStockStatusOutOfStock
+	}
+	if quantity <= 5 {
+		return constants.ProductStockStatusLowStock
+	}
+	return constants.ProductStockStatusInStock
+}
+
+func channelStockRange(quantity int64) (string, *int, *int) {
+	switch {
+	case quantity <= 5:
+		min, max := 1, 5
+		return constants.ProductStockDisplayRange1To5, &min, &max
+	case quantity <= 20:
+		min, max := 6, 20
+		return constants.ProductStockDisplayRange6To20, &min, &max
+	case quantity <= 50:
+		min, max := 21, 50
+		return constants.ProductStockDisplayRange21To50, &min, &max
+	case quantity <= 100:
+		min, max := 51, 100
+		return constants.ProductStockDisplayRange51To100, &min, &max
+	default:
+		min := 100
+		return constants.ProductStockDisplayRange100Plus, &min, nil
+	}
 }
 
 // computeStockStatus 计算库存状态。
