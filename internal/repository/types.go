@@ -74,6 +74,26 @@ type ResellerOrderScope struct {
 	ResellerID *uint
 }
 
+// ResellerLedgerListFilter 分销商账务流水过滤条件。
+type ResellerLedgerListFilter struct {
+	Page       int
+	PageSize   int
+	ResellerID uint
+	Currency   string
+	Type       string
+	Status     string
+	OrderID    uint
+}
+
+// ResellerWithdrawListFilter 分销商提现申请过滤条件。
+type ResellerWithdrawListFilter struct {
+	Page       int
+	PageSize   int
+	ResellerID uint
+	Currency   string
+	Status     string
+}
+
 // PaymentListFilter 查询支付列表的过滤条件
 type PaymentListFilter struct {
 	Page         int

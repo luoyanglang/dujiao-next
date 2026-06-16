@@ -1,11 +1,14 @@
 package repository
 
 import (
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/dujiao-next/internal/models"
+	"github.com/shopspring/decimal"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -53,5 +56,51 @@ func TestResellerRepositoryPostgresActiveUniqueIndex(t *testing.T) {
 	}
 	if second.ID != first.ID {
 		t.Fatalf("expected restore same row id=%d got id=%d", first.ID, second.ID)
+	}
+}
+
+func TestResellerRepositoryPostgresWithdrawLocksSameRows(t *testing.T) {
+	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	if strings.TrimSpace(dsn) == "" {
+		t.Skip("TEST_POSTGRES_DSN not set")
+	}
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open postgres failed: %v", err)
+	}
+	if err := db.AutoMigrate(&models.User{}, &models.ResellerProfile{}, &models.ResellerLedgerEntry{}, &models.ResellerBalanceAccount{}, &models.ResellerWithdrawRequest{}); err != nil {
+		t.Fatalf("migrate failed: %v", err)
+	}
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	profile := seedResellerProfile(t, db, "pg-reseller-withdraw-"+suffix+"@example.com")
+	repo := NewResellerRepository(db)
+	now := time.Now()
+	entry := models.ResellerLedgerEntry{
+		ResellerID:     profile.ID,
+		Type:           models.ResellerLedgerTypeOrderProfit,
+		Amount:         models.NewMoneyFromDecimal(decimal.NewFromInt(100)),
+		Currency:       "USD",
+		IdempotencyKey: "pg-order-profit-" + suffix,
+		Status:         models.ResellerLedgerStatusAvailable,
+		AvailableAt:    &now,
+	}
+	if err := db.Create(&entry).Error; err != nil {
+		t.Fatalf("create ledger failed: %v", err)
+	}
+	if err := repo.Transaction(func(tx *gorm.DB) error {
+		repoTx := repo.WithTx(tx)
+		if _, err := repoTx.GetOrCreateBalanceAccountForUpdate(profile.ID, "USD"); err != nil {
+			return err
+		}
+		rows, err := repoTx.ListAvailableLedgerEntriesForUpdate(profile.ID, "USD")
+		if err != nil {
+			return err
+		}
+		if len(rows) != 1 || rows[0].ID != entry.ID {
+			t.Fatalf("expected locked ledger %d, got %+v", entry.ID, rows)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("transaction failed: %v", err)
 	}
 }

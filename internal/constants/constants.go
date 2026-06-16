@@ -339,6 +339,7 @@ const (
 	TaskWalletRechargeExpire        = "wallet_recharge:timeout_expire"
 	TaskNotificationDispatch        = "notification:dispatch"
 	TaskAffiliateConfirmCommissions = "affiliate:confirm_commissions"
+	TaskResellerConfirmLedger       = "reseller:confirm_ledger"
 	TaskProcurementSubmit           = "procurement:submit"
 	TaskProcurementPollStatus       = "procurement:poll_status"
 	TaskProcurementSyncAccepted     = "procurement:sync_accepted"

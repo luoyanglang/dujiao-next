@@ -19,12 +19,13 @@ const (
 
 // WalletService 钱包服务
 type WalletService struct {
-	walletRepo       repository.WalletRepository
-	orderRepo        repository.OrderRepository
-	refundRecordRepo repository.OrderRefundRecordRepository
-	userRepo         repository.UserRepository
-	affiliateSvc     *AffiliateService
-	settingService   *SettingService
+	walletRepo            repository.WalletRepository
+	orderRepo             repository.OrderRepository
+	refundRecordRepo      repository.OrderRefundRecordRepository
+	userRepo              repository.UserRepository
+	affiliateSvc          *AffiliateService
+	settingService        *SettingService
+	resellerAccountingSvc *ResellerAccountingService
 }
 
 // WalletRechargeInput 用户充值输入
@@ -78,6 +79,10 @@ func NewWalletService(
 		affiliateSvc:     affiliateSvc,
 		settingService:   settingService,
 	}
+}
+
+func (s *WalletService) SetResellerAccountingService(svc *ResellerAccountingService) {
+	s.resellerAccountingSvc = svc
 }
 
 // GetAccount 获取钱包账户（不存在时自动创建）
@@ -335,6 +340,11 @@ func (s *WalletService) AdminRefundToWallet(input AdminRefundToWalletInput) (*mo
 		}
 		if err := s.refundRecordRepo.WithTx(tx).Create(record); err != nil {
 			return ErrRefundRecordCreateFailed
+		}
+		if s.resellerAccountingSvc != nil {
+			if err := s.resellerAccountingSvc.HandleRefundDeductTx(tx, &order, record, refundedBefore); err != nil {
+				return err
+			}
 		}
 		txnResult = txn
 		refundRecordResult = record

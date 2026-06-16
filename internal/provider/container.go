@@ -97,6 +97,7 @@ type Container struct {
 	AffiliateService          *service.AffiliateService
 	ResellerDomainResolver    *service.ResellerDomainResolver
 	ResellerPricingResolver   *service.ResellerPricingResolver
+	ResellerAccountingService *service.ResellerAccountingService
 	ApiCredentialService      *service.ApiCredentialService
 	SiteConnectionService     *service.SiteConnectionService
 	ProductMappingService     *service.ProductMappingService
@@ -228,6 +229,9 @@ func (c *Container) initServices() {
 	c.SettingService = service.NewSettingService(c.SettingRepo, c.Config.Order)
 	c.ResellerDomainResolver = service.NewResellerDomainResolver(c.ResellerRepo, c.Config.Reseller)
 	c.ResellerPricingResolver = service.NewResellerPricingResolver(c.ResellerRepo)
+	c.ResellerAccountingService = service.NewResellerAccountingService(c.ResellerRepo, service.ResellerAccountingOptions{
+		ConfirmDays: 7,
+	})
 	c.ComplianceService = service.NewComplianceService(c.SettingRepo)
 	smtpSetting, err := c.SettingService.GetSMTPSetting(c.Config.Email)
 	if err != nil {
@@ -269,26 +273,27 @@ func (c *Container) initServices() {
 	c.MemberLevelService = service.NewMemberLevelService(c.MemberLevelRepo, c.MemberLevelPriceRepo, c.UserRepo)
 	c.OrderRiskControlService = service.NewOrderRiskControlService(c.SettingService, c.OrderRepo)
 	c.OrderService = service.NewOrderService(service.OrderServiceOptions{
-		OrderRepo:               c.OrderRepo,
-		OrderRefundRecordRepo:   c.OrderRefundRecordRepo,
-		PaymentRepo:             c.PaymentRepo,
-		UserRepo:                c.UserRepo,
-		ProductRepo:             c.ProductRepo,
-		ProductSKURepo:          c.ProductSKURepo,
-		CardSecretRepo:          c.CardSecretRepo,
-		ResellerRepo:            c.ResellerRepo,
-		CouponRepo:              c.CouponRepo,
-		CouponUsageRepo:         c.CouponUsageRepo,
-		PromotionRepo:           c.PromotionRepo,
-		QueueClient:             c.QueueClient,
-		SettingService:          c.SettingService,
-		DefaultEmailConfig:      c.Config.Email,
-		WalletService:           c.WalletService,
-		AffiliateService:        c.AffiliateService,
-		MemberLevelService:      c.MemberLevelService,
-		ResellerPricingResolver: c.ResellerPricingResolver,
-		RiskControlService:      c.OrderRiskControlService,
-		ExpireMinutes:           c.Config.Order.PaymentExpireMinutes,
+		OrderRepo:                 c.OrderRepo,
+		OrderRefundRecordRepo:     c.OrderRefundRecordRepo,
+		PaymentRepo:               c.PaymentRepo,
+		UserRepo:                  c.UserRepo,
+		ProductRepo:               c.ProductRepo,
+		ProductSKURepo:            c.ProductSKURepo,
+		CardSecretRepo:            c.CardSecretRepo,
+		ResellerRepo:              c.ResellerRepo,
+		CouponRepo:                c.CouponRepo,
+		CouponUsageRepo:           c.CouponUsageRepo,
+		PromotionRepo:             c.PromotionRepo,
+		QueueClient:               c.QueueClient,
+		SettingService:            c.SettingService,
+		DefaultEmailConfig:        c.Config.Email,
+		WalletService:             c.WalletService,
+		AffiliateService:          c.AffiliateService,
+		MemberLevelService:        c.MemberLevelService,
+		ResellerPricingResolver:   c.ResellerPricingResolver,
+		ResellerAccountingService: c.ResellerAccountingService,
+		RiskControlService:        c.OrderRiskControlService,
+		ExpireMinutes:             c.Config.Order.PaymentExpireMinutes,
 	})
 	c.FulfillmentService = service.NewFulfillmentService(
 		c.OrderRepo, c.FulfillmentRepo, c.CardSecretRepo, c.QueueClient,
@@ -313,22 +318,23 @@ func (c *Container) initServices() {
 	c.OrderService.SetProductMappingService(c.ProductMappingService)
 	c.DownstreamCallbackService = service.NewDownstreamCallbackService(c.DownstreamOrderRefRepo, c.OrderRepo, c.ApiCredentialRepo, c.QueueClient)
 	c.PaymentService = service.NewPaymentService(service.PaymentServiceOptions{
-		OrderRepo:               c.OrderRepo,
-		ProductRepo:             c.ProductRepo,
-		ProductSKURepo:          c.ProductSKURepo,
-		PaymentRepo:             c.PaymentRepo,
-		ChannelRepo:             c.PaymentChannelRepo,
-		WalletRepo:              c.WalletRepo,
-		UserRepo:                c.UserRepo,
-		UserOAuthIdentityRepo:   c.UserOAuthIdentityRepo,
-		QueueClient:             c.QueueClient,
-		WalletService:           c.WalletService,
-		SettingService:          c.SettingService,
-		DefaultEmailConfig:      c.Config.Email,
-		ExpireMinutes:           c.Config.Order.PaymentExpireMinutes,
-		AffiliateService:        c.AffiliateService,
-		NotificationService:     c.NotificationService,
-		PaymentProviderRegistry: c.PaymentProviderRegistry,
+		OrderRepo:                 c.OrderRepo,
+		ProductRepo:               c.ProductRepo,
+		ProductSKURepo:            c.ProductSKURepo,
+		PaymentRepo:               c.PaymentRepo,
+		ChannelRepo:               c.PaymentChannelRepo,
+		WalletRepo:                c.WalletRepo,
+		UserRepo:                  c.UserRepo,
+		UserOAuthIdentityRepo:     c.UserOAuthIdentityRepo,
+		QueueClient:               c.QueueClient,
+		WalletService:             c.WalletService,
+		SettingService:            c.SettingService,
+		DefaultEmailConfig:        c.Config.Email,
+		ExpireMinutes:             c.Config.Order.PaymentExpireMinutes,
+		AffiliateService:          c.AffiliateService,
+		NotificationService:       c.NotificationService,
+		PaymentProviderRegistry:   c.PaymentProviderRegistry,
+		ResellerAccountingService: c.ResellerAccountingService,
 	})
 	c.ProcurementOrderService = service.NewProcurementOrderService(
 		c.ProcurementOrderRepo, c.OrderRepo, c.FulfillmentRepo, c.ProductMappingRepo, c.SKUMappingRepo,
@@ -348,6 +354,8 @@ func (c *Container) initServices() {
 		service.NewTelegramNotifyService(c.SettingService, c.Config.TelegramAuth),
 	)
 	c.UserAuthService.SetMemberLevelService(c.MemberLevelService)
+	c.WalletService.SetResellerAccountingService(c.ResellerAccountingService)
+	c.OrderRefundService.SetResellerAccountingService(c.ResellerAccountingService)
 	c.PaymentService.SetMemberLevelService(c.MemberLevelService)
 	c.PaymentService.SetProcurementService(c.ProcurementOrderService)
 	c.PaymentService.SetDownstreamCallbackService(c.DownstreamCallbackService)

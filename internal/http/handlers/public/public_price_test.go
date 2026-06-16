@@ -412,3 +412,67 @@ func (r *resellerPricingRepoForPublicTest) CreateOrderSnapshot(snapshot *models.
 func (r *resellerPricingRepoForPublicTest) GetOrderSnapshotByOrderID(orderID uint) (*models.ResellerOrderSnapshot, error) {
 	return nil, nil
 }
+
+func (r *resellerPricingRepoForPublicTest) CreateLedgerEntryIfNotExists(entry *models.ResellerLedgerEntry) (bool, error) {
+	return false, fmt.Errorf("not implemented")
+}
+
+func (r *resellerPricingRepoForPublicTest) GetLedgerEntryByIdempotencyKey(key string) (*models.ResellerLedgerEntry, error) {
+	return nil, nil
+}
+
+func (r *resellerPricingRepoForPublicTest) MarkDueLedgerEntriesAvailable(now time.Time) (int64, error) {
+	return 0, nil
+}
+
+func (r *resellerPricingRepoForPublicTest) ListLedgerEntries(filter repository.ResellerLedgerListFilter) ([]models.ResellerLedgerEntry, int64, error) {
+	return []models.ResellerLedgerEntry{}, 0, nil
+}
+
+func (r *resellerPricingRepoForPublicTest) SumLedgerAmount(resellerID uint, currency string, statuses []string) (decimal.Decimal, error) {
+	return decimal.Zero, nil
+}
+
+func (r *resellerPricingRepoForPublicTest) GetOrCreateBalanceAccountForUpdate(resellerID uint, currency string) (*models.ResellerBalanceAccount, error) {
+	return &models.ResellerBalanceAccount{ResellerID: resellerID, Currency: currency, Status: models.ResellerBalanceStatusNormal}, nil
+}
+
+func (r *resellerPricingRepoForPublicTest) UpdateBalanceAccount(account *models.ResellerBalanceAccount) error {
+	return nil
+}
+
+func (r *resellerPricingRepoForPublicTest) ListAvailableLedgerEntriesForUpdate(resellerID uint, currency string) ([]models.ResellerLedgerEntry, error) {
+	return []models.ResellerLedgerEntry{}, nil
+}
+
+func (r *resellerPricingRepoForPublicTest) UpdateLedgerEntry(entry *models.ResellerLedgerEntry) error {
+	return nil
+}
+
+func (r *resellerPricingRepoForPublicTest) BatchUpdateLedgerEntries(ids []uint, updates map[string]interface{}) error {
+	return nil
+}
+
+func (r *resellerPricingRepoForPublicTest) BatchUpdateLedgerEntriesByWithdrawID(withdrawID uint, updates map[string]interface{}) error {
+	return nil
+}
+
+func (r *resellerPricingRepoForPublicTest) CreateWithdrawRequest(req *models.ResellerWithdrawRequest) error {
+	return nil
+}
+
+func (r *resellerPricingRepoForPublicTest) GetWithdrawRequestByID(id uint) (*models.ResellerWithdrawRequest, error) {
+	return nil, nil
+}
+
+func (r *resellerPricingRepoForPublicTest) GetWithdrawRequestByIDForUpdate(id uint) (*models.ResellerWithdrawRequest, error) {
+	return nil, nil
+}
+
+func (r *resellerPricingRepoForPublicTest) UpdateWithdrawRequest(req *models.ResellerWithdrawRequest) error {
+	return nil
+}
+
+func (r *resellerPricingRepoForPublicTest) ListWithdrawRequests(filter repository.ResellerWithdrawListFilter) ([]models.ResellerWithdrawRequest, int64, error) {
+	return []models.ResellerWithdrawRequest{}, 0, nil
+}

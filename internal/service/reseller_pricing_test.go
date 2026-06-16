@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/dujiao-next/internal/constants"
 	"github.com/dujiao-next/internal/models"
@@ -97,6 +98,70 @@ func (r *resellerPricingRepoStub) GetOrderSnapshotByOrderID(orderID uint) (*mode
 		}
 	}
 	return nil, nil
+}
+
+func (r *resellerPricingRepoStub) CreateLedgerEntryIfNotExists(entry *models.ResellerLedgerEntry) (bool, error) {
+	return false, errors.New("not implemented")
+}
+
+func (r *resellerPricingRepoStub) GetLedgerEntryByIdempotencyKey(key string) (*models.ResellerLedgerEntry, error) {
+	return nil, nil
+}
+
+func (r *resellerPricingRepoStub) MarkDueLedgerEntriesAvailable(now time.Time) (int64, error) {
+	return 0, nil
+}
+
+func (r *resellerPricingRepoStub) ListLedgerEntries(filter repository.ResellerLedgerListFilter) ([]models.ResellerLedgerEntry, int64, error) {
+	return []models.ResellerLedgerEntry{}, 0, nil
+}
+
+func (r *resellerPricingRepoStub) SumLedgerAmount(resellerID uint, currency string, statuses []string) (decimal.Decimal, error) {
+	return decimal.Zero, nil
+}
+
+func (r *resellerPricingRepoStub) GetOrCreateBalanceAccountForUpdate(resellerID uint, currency string) (*models.ResellerBalanceAccount, error) {
+	return &models.ResellerBalanceAccount{ResellerID: resellerID, Currency: currency, Status: models.ResellerBalanceStatusNormal}, nil
+}
+
+func (r *resellerPricingRepoStub) UpdateBalanceAccount(account *models.ResellerBalanceAccount) error {
+	return nil
+}
+
+func (r *resellerPricingRepoStub) ListAvailableLedgerEntriesForUpdate(resellerID uint, currency string) ([]models.ResellerLedgerEntry, error) {
+	return []models.ResellerLedgerEntry{}, nil
+}
+
+func (r *resellerPricingRepoStub) UpdateLedgerEntry(entry *models.ResellerLedgerEntry) error {
+	return nil
+}
+
+func (r *resellerPricingRepoStub) BatchUpdateLedgerEntries(ids []uint, updates map[string]interface{}) error {
+	return nil
+}
+
+func (r *resellerPricingRepoStub) BatchUpdateLedgerEntriesByWithdrawID(withdrawID uint, updates map[string]interface{}) error {
+	return nil
+}
+
+func (r *resellerPricingRepoStub) CreateWithdrawRequest(req *models.ResellerWithdrawRequest) error {
+	return nil
+}
+
+func (r *resellerPricingRepoStub) GetWithdrawRequestByID(id uint) (*models.ResellerWithdrawRequest, error) {
+	return nil, nil
+}
+
+func (r *resellerPricingRepoStub) GetWithdrawRequestByIDForUpdate(id uint) (*models.ResellerWithdrawRequest, error) {
+	return nil, nil
+}
+
+func (r *resellerPricingRepoStub) UpdateWithdrawRequest(req *models.ResellerWithdrawRequest) error {
+	return nil
+}
+
+func (r *resellerPricingRepoStub) ListWithdrawRequests(filter repository.ResellerWithdrawListFilter) ([]models.ResellerWithdrawRequest, int64, error) {
+	return []models.ResellerWithdrawRequest{}, 0, nil
 }
 
 func testResellerProfile() *models.ResellerProfile {

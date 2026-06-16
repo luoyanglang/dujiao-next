@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/dujiao-next/internal/models"
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // ResellerRepository 分销商数据访问接口。
@@ -25,6 +27,22 @@ type ResellerRepository interface {
 	IsActiveRelatedAccount(resellerID uint, userID uint) (bool, error)
 	CreateOrderSnapshot(snapshot *models.ResellerOrderSnapshot) error
 	GetOrderSnapshotByOrderID(orderID uint) (*models.ResellerOrderSnapshot, error)
+	CreateLedgerEntryIfNotExists(entry *models.ResellerLedgerEntry) (bool, error)
+	GetLedgerEntryByIdempotencyKey(key string) (*models.ResellerLedgerEntry, error)
+	MarkDueLedgerEntriesAvailable(now time.Time) (int64, error)
+	ListLedgerEntries(filter ResellerLedgerListFilter) ([]models.ResellerLedgerEntry, int64, error)
+	SumLedgerAmount(resellerID uint, currency string, statuses []string) (decimal.Decimal, error)
+	GetOrCreateBalanceAccountForUpdate(resellerID uint, currency string) (*models.ResellerBalanceAccount, error)
+	UpdateBalanceAccount(account *models.ResellerBalanceAccount) error
+	ListAvailableLedgerEntriesForUpdate(resellerID uint, currency string) ([]models.ResellerLedgerEntry, error)
+	UpdateLedgerEntry(entry *models.ResellerLedgerEntry) error
+	BatchUpdateLedgerEntries(ids []uint, updates map[string]interface{}) error
+	BatchUpdateLedgerEntriesByWithdrawID(withdrawID uint, updates map[string]interface{}) error
+	CreateWithdrawRequest(req *models.ResellerWithdrawRequest) error
+	GetWithdrawRequestByID(id uint) (*models.ResellerWithdrawRequest, error)
+	GetWithdrawRequestByIDForUpdate(id uint) (*models.ResellerWithdrawRequest, error)
+	UpdateWithdrawRequest(req *models.ResellerWithdrawRequest) error
+	ListWithdrawRequests(filter ResellerWithdrawListFilter) ([]models.ResellerWithdrawRequest, int64, error)
 }
 
 // GormResellerRepository GORM 分销商仓储。
@@ -308,6 +326,282 @@ func (r *GormResellerRepository) GetOrderSnapshotByOrderID(orderID uint) (*model
 		return nil, err
 	}
 	return &snapshot, nil
+}
+
+// CreateLedgerEntryIfNotExists 按幂等键创建分销账务流水。
+func (r *GormResellerRepository) CreateLedgerEntryIfNotExists(entry *models.ResellerLedgerEntry) (bool, error) {
+	if entry == nil {
+		return false, errors.New("reseller ledger entry is nil")
+	}
+	key := strings.TrimSpace(entry.IdempotencyKey)
+	if key == "" {
+		return false, errors.New("reseller ledger idempotency key is empty")
+	}
+	existing, err := r.GetLedgerEntryByIdempotencyKey(key)
+	if err != nil {
+		return false, err
+	}
+	if existing != nil {
+		return false, nil
+	}
+	now := time.Now()
+	if entry.CreatedAt.IsZero() {
+		entry.CreatedAt = now
+	}
+	entry.UpdatedAt = now
+	if err := r.db.Create(entry).Error; err != nil {
+		var again models.ResellerLedgerEntry
+		if lookupErr := r.db.Where("idempotency_key = ?", key).First(&again).Error; lookupErr == nil {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// GetLedgerEntryByIdempotencyKey 按幂等键获取分销账务流水。
+func (r *GormResellerRepository) GetLedgerEntryByIdempotencyKey(key string) (*models.ResellerLedgerEntry, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, nil
+	}
+	var row models.ResellerLedgerEntry
+	if err := r.db.Where("idempotency_key = ?", key).First(&row).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &row, nil
+}
+
+// MarkDueLedgerEntriesAvailable 将到期确认流水转为可提现。
+func (r *GormResellerRepository) MarkDueLedgerEntriesAvailable(now time.Time) (int64, error) {
+	res := r.db.Model(&models.ResellerLedgerEntry{}).
+		Where("status = ? AND available_at IS NOT NULL AND available_at <= ?", models.ResellerLedgerStatusPendingConfirm, now).
+		Updates(map[string]interface{}{
+			"status":     models.ResellerLedgerStatusAvailable,
+			"updated_at": now,
+		})
+	return res.RowsAffected, res.Error
+}
+
+// ListLedgerEntries 分页列出分销账务流水。
+func (r *GormResellerRepository) ListLedgerEntries(filter ResellerLedgerListFilter) ([]models.ResellerLedgerEntry, int64, error) {
+	rows := make([]models.ResellerLedgerEntry, 0)
+	query := r.db.Model(&models.ResellerLedgerEntry{})
+	if filter.ResellerID != 0 {
+		query = query.Where("reseller_id = ?", filter.ResellerID)
+	}
+	if currency := strings.TrimSpace(filter.Currency); currency != "" {
+		query = query.Where("currency = ?", currency)
+	}
+	if typ := strings.TrimSpace(filter.Type); typ != "" {
+		query = query.Where("type = ?", typ)
+	}
+	if status := strings.TrimSpace(filter.Status); status != "" {
+		query = query.Where("status = ?", status)
+	}
+	if filter.OrderID != 0 {
+		query = query.Where("order_id = ?", filter.OrderID)
+	}
+	var total int64
+	if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	if err := applyPagination(query.Session(&gorm.Session{}), filter.Page, filter.PageSize).
+		Order("id DESC").
+		Find(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+	return rows, total, nil
+}
+
+// SumLedgerAmount 汇总指定状态的分销账务金额。
+func (r *GormResellerRepository) SumLedgerAmount(resellerID uint, currency string, statuses []string) (decimal.Decimal, error) {
+	currency = strings.TrimSpace(currency)
+	if resellerID == 0 || currency == "" || len(statuses) == 0 {
+		return decimal.Zero, nil
+	}
+	var total decimal.Decimal
+	err := r.db.Model(&models.ResellerLedgerEntry{}).
+		Where("reseller_id = ? AND currency = ? AND status IN ?", resellerID, currency, statuses).
+		Select("COALESCE(SUM(amount), 0)").
+		Scan(&total).Error
+	if err != nil {
+		return decimal.Zero, err
+	}
+	return total.Round(2), nil
+}
+
+// GetOrCreateBalanceAccountForUpdate 获取或创建并锁定同币种余额账户。
+func (r *GormResellerRepository) GetOrCreateBalanceAccountForUpdate(resellerID uint, currency string) (*models.ResellerBalanceAccount, error) {
+	currency = strings.TrimSpace(currency)
+	if resellerID == 0 || currency == "" {
+		return nil, errors.New("invalid reseller balance account")
+	}
+	var row models.ResellerBalanceAccount
+	err := r.db.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("reseller_id = ? AND currency = ?", resellerID, currency).
+		First(&row).Error
+	if err == nil {
+		return &row, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	now := time.Now()
+	row = models.ResellerBalanceAccount{
+		ResellerID: resellerID,
+		Currency:   currency,
+		Status:     models.ResellerBalanceStatusNormal,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	if err := r.db.Create(&row).Error; err != nil {
+		return nil, err
+	}
+	if err := r.db.Clauses(clause.Locking{Strength: "UPDATE"}).First(&row, row.ID).Error; err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+// UpdateBalanceAccount 更新分销余额账户缓存。
+func (r *GormResellerRepository) UpdateBalanceAccount(account *models.ResellerBalanceAccount) error {
+	if account == nil {
+		return errors.New("reseller balance account is nil")
+	}
+	account.UpdatedAt = time.Now()
+	return r.db.Save(account).Error
+}
+
+// ListAvailableLedgerEntriesForUpdate 锁定指定币种可提现正向流水。
+func (r *GormResellerRepository) ListAvailableLedgerEntriesForUpdate(resellerID uint, currency string) ([]models.ResellerLedgerEntry, error) {
+	rows := make([]models.ResellerLedgerEntry, 0)
+	currency = strings.TrimSpace(currency)
+	if resellerID == 0 || currency == "" {
+		return rows, nil
+	}
+	err := r.db.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("reseller_id = ? AND currency = ? AND status = ? AND withdraw_request_id IS NULL AND amount > 0",
+			resellerID,
+			currency,
+			models.ResellerLedgerStatusAvailable,
+		).
+		Order("available_at ASC, id ASC").
+		Find(&rows).Error
+	return rows, err
+}
+
+// UpdateLedgerEntry 更新单条分销账务流水。
+func (r *GormResellerRepository) UpdateLedgerEntry(entry *models.ResellerLedgerEntry) error {
+	if entry == nil {
+		return errors.New("reseller ledger entry is nil")
+	}
+	entry.UpdatedAt = time.Now()
+	return r.db.Save(entry).Error
+}
+
+// BatchUpdateLedgerEntries 批量更新分销账务流水。
+func (r *GormResellerRepository) BatchUpdateLedgerEntries(ids []uint, updates map[string]interface{}) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	if updates == nil {
+		updates = map[string]interface{}{}
+	}
+	updates["updated_at"] = time.Now()
+	return r.db.Model(&models.ResellerLedgerEntry{}).Where("id IN ?", ids).Updates(updates).Error
+}
+
+// BatchUpdateLedgerEntriesByWithdrawID 按提现单 ID 批量更新分销账务流水。
+func (r *GormResellerRepository) BatchUpdateLedgerEntriesByWithdrawID(withdrawID uint, updates map[string]interface{}) error {
+	if withdrawID == 0 {
+		return nil
+	}
+	if updates == nil {
+		updates = map[string]interface{}{}
+	}
+	updates["updated_at"] = time.Now()
+	return r.db.Model(&models.ResellerLedgerEntry{}).Where("withdraw_request_id = ?", withdrawID).Updates(updates).Error
+}
+
+// CreateWithdrawRequest 创建分销提现申请。
+func (r *GormResellerRepository) CreateWithdrawRequest(req *models.ResellerWithdrawRequest) error {
+	if req == nil {
+		return errors.New("reseller withdraw request is nil")
+	}
+	now := time.Now()
+	if req.CreatedAt.IsZero() {
+		req.CreatedAt = now
+	}
+	req.UpdatedAt = now
+	return r.db.Create(req).Error
+}
+
+// GetWithdrawRequestByID 按 ID 获取分销提现申请。
+func (r *GormResellerRepository) GetWithdrawRequestByID(id uint) (*models.ResellerWithdrawRequest, error) {
+	if id == 0 {
+		return nil, nil
+	}
+	var row models.ResellerWithdrawRequest
+	if err := r.db.First(&row, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &row, nil
+}
+
+// GetWithdrawRequestByIDForUpdate 按 ID 获取并锁定分销提现申请。
+func (r *GormResellerRepository) GetWithdrawRequestByIDForUpdate(id uint) (*models.ResellerWithdrawRequest, error) {
+	if id == 0 {
+		return nil, nil
+	}
+	var row models.ResellerWithdrawRequest
+	if err := r.db.Clauses(clause.Locking{Strength: "UPDATE"}).First(&row, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &row, nil
+}
+
+// UpdateWithdrawRequest 更新分销提现申请。
+func (r *GormResellerRepository) UpdateWithdrawRequest(req *models.ResellerWithdrawRequest) error {
+	if req == nil {
+		return errors.New("reseller withdraw request is nil")
+	}
+	req.UpdatedAt = time.Now()
+	return r.db.Save(req).Error
+}
+
+// ListWithdrawRequests 分页列出分销提现申请。
+func (r *GormResellerRepository) ListWithdrawRequests(filter ResellerWithdrawListFilter) ([]models.ResellerWithdrawRequest, int64, error) {
+	rows := make([]models.ResellerWithdrawRequest, 0)
+	query := r.db.Model(&models.ResellerWithdrawRequest{})
+	if filter.ResellerID != 0 {
+		query = query.Where("reseller_id = ?", filter.ResellerID)
+	}
+	if currency := strings.TrimSpace(filter.Currency); currency != "" {
+		query = query.Where("currency = ?", currency)
+	}
+	if status := strings.TrimSpace(filter.Status); status != "" {
+		query = query.Where("status = ?", status)
+	}
+	var total int64
+	if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	if err := applyPagination(query.Session(&gorm.Session{}), filter.Page, filter.PageSize).
+		Order("id DESC").
+		Find(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+	return rows, total, nil
 }
 
 func normalizeDomainForRepository(raw string) string {

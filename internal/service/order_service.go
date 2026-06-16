@@ -37,6 +37,7 @@ type OrderService struct {
 	affiliateSvc            *AffiliateService
 	memberLevelService      *MemberLevelService
 	resellerPricingResolver *ResellerPricingResolver
+	resellerAccountingSvc   *ResellerAccountingService
 	riskControlSvc          *OrderRiskControlService
 	productMappingService   *ProductMappingService
 	expireMinutes           int
@@ -50,27 +51,28 @@ type orderQueueClient interface {
 
 // OrderServiceOptions 订单服务构造参数
 type OrderServiceOptions struct {
-	OrderRepo               repository.OrderRepository
-	OrderRefundRecordRepo   repository.OrderRefundRecordRepository
-	PaymentRepo             repository.PaymentRepository
-	UserRepo                repository.UserRepository
-	ProductRepo             repository.ProductRepository
-	ProductSKURepo          repository.ProductSKURepository
-	CardSecretRepo          repository.CardSecretRepository
-	ResellerRepo            repository.ResellerRepository
-	CouponRepo              repository.CouponRepository
-	CouponUsageRepo         repository.CouponUsageRepository
-	PromotionRepo           repository.PromotionRepository
-	QueueClient             *queue.Client
-	SettingService          *SettingService
-	DefaultEmailConfig      config.EmailConfig
-	WalletService           *WalletService
-	AffiliateService        *AffiliateService
-	MemberLevelService      *MemberLevelService
-	ResellerPricingResolver *ResellerPricingResolver
-	RiskControlService      *OrderRiskControlService
-	ProductMappingService   *ProductMappingService
-	ExpireMinutes           int
+	OrderRepo                 repository.OrderRepository
+	OrderRefundRecordRepo     repository.OrderRefundRecordRepository
+	PaymentRepo               repository.PaymentRepository
+	UserRepo                  repository.UserRepository
+	ProductRepo               repository.ProductRepository
+	ProductSKURepo            repository.ProductSKURepository
+	CardSecretRepo            repository.CardSecretRepository
+	ResellerRepo              repository.ResellerRepository
+	CouponRepo                repository.CouponRepository
+	CouponUsageRepo           repository.CouponUsageRepository
+	PromotionRepo             repository.PromotionRepository
+	QueueClient               *queue.Client
+	SettingService            *SettingService
+	DefaultEmailConfig        config.EmailConfig
+	WalletService             *WalletService
+	AffiliateService          *AffiliateService
+	MemberLevelService        *MemberLevelService
+	ResellerPricingResolver   *ResellerPricingResolver
+	ResellerAccountingService *ResellerAccountingService
+	RiskControlService        *OrderRiskControlService
+	ProductMappingService     *ProductMappingService
+	ExpireMinutes             int
 }
 
 // SetProductMappingService 注入商品映射服务（用于下单前上游库存兜底校验）。
@@ -103,6 +105,7 @@ func NewOrderService(opts OrderServiceOptions) *OrderService {
 		affiliateSvc:            opts.AffiliateService,
 		memberLevelService:      opts.MemberLevelService,
 		resellerPricingResolver: opts.ResellerPricingResolver,
+		resellerAccountingSvc:   opts.ResellerAccountingService,
 		riskControlSvc:          opts.RiskControlService,
 		productMappingService:   opts.ProductMappingService,
 		expireMinutes:           opts.ExpireMinutes,

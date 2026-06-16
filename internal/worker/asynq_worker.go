@@ -49,6 +49,7 @@ func (c *Consumer) Register(mux *asynq.ServeMux) {
 	mux.HandleFunc(queue.TaskWalletRechargeExpire, withPanicRecovery(queue.TaskWalletRechargeExpire, c.handleWalletRechargeExpire))
 	mux.HandleFunc(queue.TaskNotificationDispatch, withPanicRecovery(queue.TaskNotificationDispatch, c.handleNotificationDispatch))
 	mux.HandleFunc(queue.TaskAffiliateConfirmCommissions, withPanicRecovery(queue.TaskAffiliateConfirmCommissions, c.handleAffiliateConfirmCommissions))
+	mux.HandleFunc(queue.TaskResellerConfirmLedger, withPanicRecovery(queue.TaskResellerConfirmLedger, c.handleResellerConfirmLedger))
 	mux.HandleFunc(queue.TaskUpstreamSyncStock, withPanicRecovery(queue.TaskUpstreamSyncStock, c.handleUpstreamSyncStock))
 	mux.HandleFunc(queue.TaskProcurementSubmit, withPanicRecovery(queue.TaskProcurementSubmit, c.handleProcurementSubmit))
 	mux.HandleFunc(queue.TaskProcurementPollStatus, withPanicRecovery(queue.TaskProcurementPollStatus, c.handleProcurementPollStatus))
@@ -392,6 +393,20 @@ func (c *Consumer) handleAffiliateConfirmCommissions(_ context.Context, _ *asynq
 		logger.Warnw("worker_affiliate_confirm_due_failed", "error", err)
 		return err
 	}
+	return nil
+}
+
+func (c *Consumer) handleResellerConfirmLedger(_ context.Context, _ *asynq.Task) error {
+	if c == nil || c.ResellerAccountingService == nil {
+		logger.Debugw("worker_reseller_confirm_ledger_skip_nil", "consumer_nil", c == nil)
+		return nil
+	}
+	affected, err := c.ResellerAccountingService.ConfirmDueLedgerEntries(time.Now())
+	if err != nil {
+		logger.Warnw("worker_reseller_confirm_ledger_failed", "error", err)
+		return err
+	}
+	logger.Debugw("worker_reseller_confirm_ledger_ok", "affected", affected)
 	return nil
 }
 
